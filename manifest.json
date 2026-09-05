@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "观看小助手",
+  "version": "1.0.0",
+  "description": "自动识别兼容的视频列表模板，按标签筛选并补位；已适配站点支持分类筛选。",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://client-rapi-missav.recombee.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "观看小助手 · 内容过滤设置",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "js": [
+        "site-library.js",
+        "label-library.js",
+        "genre-library.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

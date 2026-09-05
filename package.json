@@ -1,0 +1,11 @@
+{
+  "name": "missav-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/background.test.cjs tests/content.test.cjs tests/genre-library.test.cjs tests/manifest.test.cjs",
+    "test:browser": "node tests/browser-performance.cjs",
+    "test:popup": "node tests/popup-browser.cjs",
+    "test:templates": "node tests/template-browser.cjs"
+  }
+}

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>观看小助手 · 内容过滤设置</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header class="masthead">
+      <img class="brand-mark" src="icons/icon-48.png" width="32" height="32" alt="" aria-hidden="true">
+      <div>
+        <p class="eyebrow">VIEWING ASSISTANT</p>
+        <h1>观看小助手</h1>
+      </div>
+      <span id="statusBadge" class="status-badge">已开启</span>
+    </header>
+
+    <main>
+      <section class="master-control" aria-labelledby="masterTitle">
+        <div>
+          <h2 id="masterTitle">内容过滤</h2>
+          <p id="ruleSummary">正在读取设置…</p>
+        </div>
+        <label class="switch">
+          <input id="enabled" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="sr-only">启用内容过滤</span>
+        </label>
+      </section>
+
+      <p id="siteStatus" class="site-status" role="status">正在识别当前页面…</p>
+
+      <section class="panel" aria-labelledby="tagTitle">
+        <div class="section-heading">
+          <div>
+            <h2 id="tagTitle">隐藏标签</h2>
+          </div>
+          <span>按卡片上的标记筛选</span>
+        </div>
+
+        <div class="rule-list">
+          <label class="rule-row">
+            <input type="checkbox" name="preset" value="uncensored">
+            <span class="checkmark" aria-hidden="true"></span>
+            <span><strong>无码影片</strong><small>自动识别各语言界面的同类标签</small></span>
+          </label>
+          <label class="rule-row">
+            <input type="checkbox" name="preset" value="chinese-subtitle">
+            <span class="checkmark" aria-hidden="true"></span>
+            <span><strong>中文字幕</strong><small>隐藏带中文字幕标记的视频</small></span>
+          </label>
+          <label class="rule-row">
+            <input type="checkbox" name="preset" value="other-subtitle">
+            <span class="checkmark" aria-hidden="true"></span>
+            <span><strong>其他字幕</strong><small>隐藏中文以外的字幕标记</small></span>
+          </label>
+          <label class="rule-row">
+            <input id="hideUntagged" type="checkbox">
+            <span class="checkmark" aria-hidden="true"></span>
+            <span><strong>无标签</strong><small>隐藏没有可见标签的视频</small></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel genre-panel" aria-labelledby="genreTitle">
+        <div class="section-heading">
+          <div>
+            <h2 id="genreTitle">分类条件</h2>
+          </div>
+          <span id="genreCount">正在读取…</span>
+        </div>
+        <p id="genreExplainer" class="genre-explainer">按视频的内页分类筛选，隐藏条件优先。</p>
+
+        <div class="genre-picker include-picker" data-picker="include">
+          <label for="genreIncludeSearch" class="genre-picker-label">
+            <span>只显示这些分类</span>
+            <small>留空表示不限制</small>
+          </label>
+          <div id="genreIncludeField" class="genre-chip-field">
+            <input
+              id="genreIncludeSearch"
+              type="search"
+              placeholder="搜索并添加分类…"
+              autocomplete="off"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="genreIncludeSuggestions"
+            >
+          </div>
+          <div id="genreIncludeSuggestions" class="genre-suggestions" role="listbox" hidden></div>
+        </div>
+
+        <div class="genre-picker exclude-picker" data-picker="exclude">
+          <label for="genreExcludeSearch" class="genre-picker-label">
+            <span>隐藏这些分类</span>
+            <small>命中即隐藏</small>
+          </label>
+          <div id="genreExcludeField" class="genre-chip-field">
+            <input
+              id="genreExcludeSearch"
+              type="search"
+              placeholder="搜索并添加分类…"
+              autocomplete="off"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="genreExcludeSuggestions"
+            >
+          </div>
+          <div id="genreExcludeSuggestions" class="genre-suggestions" role="listbox" hidden></div>
+        </div>
+      </section>
+
+      <label class="scroll-control" title="关闭后，首页保持原样，其他列表页继续筛选">
+        <span>首页生效<small>在首页应用筛选规则</small></span>
+        <span class="switch switch-small">
+          <input id="homepageEnabled" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <label class="scroll-control" title="滚动接近底部时，自动加载下一页">
+        <span>连续滚动<small>自动加载下一页</small></span>
+        <span class="switch switch-small">
+          <input id="infiniteScroll" type="checkbox">
+          <span class="switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+    </main>
+
+    <footer>
+      <span id="saveState" aria-live="polite">设置自动保存</span>
+      <button id="resetButton" type="button">恢复默认</button>
+    </footer>
+
+    <script src="label-library.js"></script>
+    <script src="genre-library.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

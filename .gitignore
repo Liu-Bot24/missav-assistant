@@ -1,0 +1,5 @@
+DEVELOPMENT_LOG.md
+*.zip
+output/
+node_modules/
+AGENTS.md

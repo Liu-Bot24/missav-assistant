@@ -1,0 +1,98 @@
+[data-viewing-assistant] .missav-content-filter-hidden {
+  display: none !important;
+}
+
+[data-viewing-assistant] .missav-content-filter-grid-settling {
+  position: relative;
+  min-height: 180px;
+}
+
+[data-viewing-assistant] .missav-content-filter-grid-settling > * {
+  visibility: hidden !important;
+}
+
+[data-viewing-assistant] .missav-content-filter-grid-settling::after {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  content: "正在筛选并补齐…";
+  font: 600 13px/1.4 system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  visibility: visible;
+}
+
+[data-viewing-assistant] .missav-content-filter-control-busy {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: min(360px, calc(100% - 32px));
+  min-height: 44px;
+  margin: 24px auto;
+  padding: 10px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  color: #cbd5e1;
+  background: rgba(30, 41, 59, 0.72);
+  cursor: pointer;
+  font: 600 13px/1.4 system-ui, sans-serif;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f0527c;
+  content: "";
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel:hover,
+[data-viewing-assistant] .missav-content-filter-sentinel:focus-visible {
+  border-color: rgba(240, 82, 124, 0.7);
+  color: #fff;
+  background: rgba(51, 65, 85, 0.88);
+  outline: none;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel.is-loading::before {
+  animation: missav-filter-pulse 900ms ease-in-out infinite alternate;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel.is-complete {
+  cursor: default;
+  opacity: 0.7;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel.is-complete::before {
+  background: #32c7a2;
+}
+
+[data-viewing-assistant] .missav-content-filter-sentinel.is-error::before {
+  background: #f59e0b;
+}
+
+@keyframes missav-filter-pulse {
+  to {
+    opacity: 0.25;
+    transform: scale(1.65);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-viewing-assistant] .missav-content-filter-sentinel {
+    transition: none;
+  }
+
+  [data-viewing-assistant] .missav-content-filter-sentinel.is-loading::before {
+    animation: none;
+  }
+}
