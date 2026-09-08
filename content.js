@@ -7,6 +7,9 @@
     homepageEnabled: true,
     hideUntagged: false,
     infiniteScroll: false,
+    actressLimitEnabled: true,
+    maxActresses: 3,
+    showActressNames: true,
     blockedPresets: ["uncensored"],
     genreIncludeRules: [],
     genreExcludeRules: ["group:gender-diverse"]
@@ -19,7 +22,10 @@
   const HIDDEN_CLASS = "missav-content-filter-hidden";
   const LABEL_HIDDEN_CLASS = "missav-content-filter-label-hidden";
   const GENRE_HIDDEN_CLASS = "missav-content-filter-genre-hidden";
+  const ACTRESS_NAMES_CLASS = "missav-actress-names";
+  const ACTRESS_HOST_CLASS = "missav-actress-host";
   const PENDING_CLASS = "missav-content-filter-pending";
+  const UNVERIFIED_CLASS = "missav-content-filter-unverified";
   const SETTLING_GRID_CLASS = "missav-content-filter-grid-settling";
   const BUSY_CONTROL_CLASS = "missav-content-filter-control-busy";
   const REFILL_ATTRIBUTE = "data-missav-filter-refill";
@@ -31,9 +37,11 @@
   const HOME_REFILL_RESPONSE_TIMEOUT_MS = 15000;
   const HOME_GRID_REVEAL_QUIET_MS = 1800;
   const pageHtmlCache = new Map();
-  const metadataPromises = new Map();
-  const metadataResults = new Map();
-  const cardDecisionRevisions = new WeakMap();
+  const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
+  metadataClient.subscribe(() => scheduleScan());
+  const metadataNotices = new Map();
+  const stalledPageIds = new Set();
+  const cardSettledRevisions = new WeakMap();
   const homeGridPending = new WeakSet();
   const homeGridRequestTokens = new WeakMap();
   const homeGridAttempts = new WeakMap();
@@ -54,7 +62,12 @@
   let infiniteGrid = null;
   let infiniteNextPageUrl = null;
   let infiniteLoading = false;
+  let infiniteLoadToken = null;
+  let infiniteNeedsRetry = false;
   let infiniteSeenCardKeys = new Set();
+  let paginationTask = null;
+  let paginationNeedsRetry = false;
+  let paginationRunKey = null;
 
   function normalizeText(value) {
     return String(value ?? "")
@@ -105,6 +118,11 @@
       homepageEnabled: value?.homepageEnabled !== false,
       hideUntagged: value?.hideUntagged === true,
       infiniteScroll: value?.infiniteScroll === true,
+      actressLimitEnabled: value?.actressLimitEnabled !== false,
+      maxActresses: Number.isSafeInteger(Number(value?.maxActresses)) && Number(value.maxActresses) >= 0 &&
+        value.maxActresses !== null && value.maxActresses !== ""
+        ? Number(value.maxActresses) : DEFAULT_SETTINGS.maxActresses,
+      showActressNames: value?.showActressNames !== false,
       blockedPresets: MissavLabelLibrary.sanitizePresets(value?.blockedPresets),
       genreIncludeRules: sanitizeGenreRules(
         value?.genreIncludeRules,
@@ -225,6 +243,7 @@
     const hidden =
       layoutItem.classList.contains(LABEL_HIDDEN_CLASS) ||
       layoutItem.classList.contains(GENRE_HIDDEN_CLASS) ||
+      layoutItem.classList.contains(UNVERIFIED_CLASS) ||
       layoutItem.classList.contains(PENDING_CLASS);
     if (layoutItem.classList.contains(HIDDEN_CLASS) !== hidden) {
       layoutItem.classList.toggle(HIDDEN_CLASS, hidden);
@@ -246,12 +265,14 @@
     layoutItem.classList.toggle(LABEL_HIDDEN_CLASS, false);
     layoutItem.classList.toggle(GENRE_HIDDEN_CLASS, false);
     layoutItem.classList.toggle(PENDING_CLASS, false);
+    layoutItem.classList.toggle(UNVERIFIED_CLASS, false);
     syncCardHiddenState(card);
-    cardDecisionRevisions.delete(card);
+    cardSettledRevisions.delete(card);
+    removeActressNames(card);
   }
 
-  function markCardDecisionComplete(card) {
-    cardDecisionRevisions.set(card, filterRevision);
+  function markCardSettled(card) {
+    cardSettledRevisions.set(card, filterRevision);
   }
 
   function applyVisibleLabelStage(entries, useComputedStyles = true) {
@@ -300,39 +321,29 @@
 
     for (const { card } of contentEntries) {
       if (survivorCards.has(card)) continue;
+      removeActressNames(card);
       setCardPending(card, false);
+      setCardHiddenForReason(card, UNVERIFIED_CLASS, false);
       setCardHiddenForReason(card, GENRE_HIDDEN_CLASS, false);
-      markCardDecisionComplete(card);
+      markCardSettled(card);
     }
 
-    if (!isFilteringActive() || !genreFilteringEnabled()) {
+    if (!isFilteringActive() || !needsMetadata()) {
       for (const { card } of visibleEligible) {
+        removeActressNames(card);
         setCardPending(card, false);
+        setCardHiddenForReason(card, UNVERIFIED_CLASS, false);
         setCardHiddenForReason(card, GENRE_HIDDEN_CLASS, false);
-        markCardDecisionComplete(card);
+        markCardSettled(card);
       }
       return visibleEligible;
     }
 
     for (const { card } of visibleEligible) {
       const itemId = getCardItemId(card, baseUrl);
-      if (!itemId) {
-        setCardPending(card, false);
-        setCardHiddenForReason(card, GENRE_HIDDEN_CLASS, false);
-        markCardDecisionComplete(card);
-      } else if (metadataResults.has(itemId)) {
-        setCardHiddenForReason(
-          card,
-          GENRE_HIDDEN_CLASS,
-          !metadataPassesGenreRules(metadataResults.get(itemId))
-        );
-        setCardPending(card, false);
-        markCardDecisionComplete(card);
-      } else {
-        cardDecisionRevisions.delete(card);
-        setCardPending(card, true);
-      }
+      applyCardMetadata(card, itemId);
     }
+    metadataClient.request(visibleEligible.map(({ card }) => getCardItemId(card, baseUrl)));
 
     return visibleEligible;
   }
@@ -483,6 +494,41 @@
     );
   }
 
+  function metadataFilteringEnabled() {
+    return genreFilteringEnabled() || (site.metadata === "missav" && settings.actressLimitEnabled);
+  }
+
+  function needsMetadata() {
+    return metadataFilteringEnabled() || (site.metadata === "missav" && settings.showActressNames);
+  }
+
+  function removeActressNames(card) {
+    card.querySelector(`.${ACTRESS_NAMES_CLASS}`)?.remove();
+    card.classList.remove(ACTRESS_HOST_CLASS);
+  }
+
+  function updateActressNames(card, metadata) {
+    const names = metadata?.cast?.names;
+    if (!isFilteringActive() || site.metadata !== "missav" || !settings.showActressNames ||
+        !Array.isArray(names) || names.length === 0) {
+      removeActressNames(card);
+      return;
+    }
+    let overlay = card.querySelector(`.${ACTRESS_NAMES_CLASS}`);
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = ACTRESS_NAMES_CLASS;
+      card.append(overlay);
+    }
+    card.classList.add(ACTRESS_HOST_CLASS);
+    const text = names.slice(0, 3).join("、") + (names.length > 3 ? "…" : "");
+    if (overlay.textContent !== text) overlay.textContent = text;
+    const badge = [...card.querySelectorAll("span")].find(isBadge);
+    const badgeSize = badge ? Number.parseFloat(getComputedStyle(badge).fontSize) : 12;
+    const fontSize = `${Math.max(24, (Number.isFinite(badgeSize) ? badgeSize : 12) * 2)}px`;
+    if (overlay.style.fontSize !== fontSize) overlay.style.fontSize = fontSize;
+  }
+
   function metadataValues(metadata) {
     if (!metadata) return [];
     return [
@@ -492,8 +538,12 @@
     ];
   }
 
-  function metadataPassesGenreRules(metadata) {
-    if (!metadata) return true;
+  function metadataPassesFilters(metadata) {
+    if (!metadata) return false;
+
+    if (settings.actressLimitEnabled &&
+        Number.isSafeInteger(metadata.cast?.confirmedCount) &&
+        metadata.cast.confirmedCount > settings.maxActresses) return false;
 
     const values = metadataValues(metadata);
     const excluded = settings.genreExcludeRules.some((rule) =>
@@ -524,76 +574,130 @@
     });
   }
 
-  async function ensureMetadata(itemIds) {
-    const uniqueIds = [...new Set(itemIds.filter(Boolean))];
-    const missingIds = uniqueIds.filter((id) => !metadataPromises.has(id));
-
-    for (let offset = 0; offset < missingIds.length; offset += 30) {
-      const batchIds = missingIds.slice(offset, offset + 30);
-      const batchPromise = sendMetadataQuery(batchIds);
-      for (const id of batchIds) {
-        metadataPromises.set(
-          id,
-          batchPromise.then((items) => {
-            const metadata = items[id] ?? null;
-            metadataResults.set(id, metadata);
-            return metadata;
-          })
-        );
-      }
+  function metadataDecision(itemId) {
+    if (!metadataFilteringEnabled()) return "passed";
+    if (!itemId) return "unverified";
+    const record = metadataClient.get(itemId);
+    if (["idle", "pending"].includes(record.status)) return "pending";
+    if (record.status !== "ready") return "unverified";
+    const metadata = record.data;
+    if (genreFilteringEnabled() && (!Array.isArray(metadata.genres) || !Array.isArray(metadata.tags) ||
+        typeof metadata.type !== "string")) {
+      return "unverified";
     }
-
-    const pairs = await Promise.all(uniqueIds.map(async (id) => [
-      id,
-      await metadataPromises.get(id)
-    ]));
-    return Object.fromEntries(pairs);
+    if (settings.actressLimitEnabled && !Array.isArray(metadata.actresses)) return "unverified";
+    if ([...settings.genreIncludeRules, ...settings.genreExcludeRules].includes("group:duration-4h-plus") &&
+        (metadata.duration === null || metadata.duration === undefined || !Number.isFinite(Number(metadata.duration)))) {
+      return "unverified";
+    }
+    return metadataPassesFilters(metadata) ? "passed" : "blocked";
   }
 
-  async function filterEntriesByAllRules(entries, baseUrl, revision) {
-    const visibleEligible = applyVisibleLabelStage(entries, false);
-    if (!isFilteringActive() || !genreFilteringEnabled() || visibleEligible.length === 0) {
-      return visibleEligible;
-    }
+  function applyCardMetadata(card, itemId) {
+    const decision = metadataDecision(itemId);
+    const layoutItem = findLayoutItem(card);
+    // Apply a single decision before syncing visibility: no intermediate reveal.
+    layoutItem.classList.toggle(GENRE_HIDDEN_CLASS, decision === "blocked");
+    layoutItem.classList.toggle(PENDING_CLASS, decision === "pending");
+    layoutItem.classList.toggle(UNVERIFIED_CLASS, decision === "unverified");
+    syncCardHiddenState(card);
+    if (decision === "pending") cardSettledRevisions.delete(card);
+    else markCardSettled(card);
+    // Display is a projection of available data, independent of request lifetime.
+    updateActressNames(card, metadataClient.get(itemId).data);
+    return decision;
+  }
 
+  function retryMetadata(ids = null) {
+    if (ids) metadataClient.retry(ids);
+    else metadataClient.invalidateUnresolved();
+    paginationNeedsRetry = false;
+    paginationRunKey = null;
+    infiniteNeedsRetry = false;
+    stalledPageIds.clear();
+    scheduleScan();
+    if (settings.infiniteScroll && infiniteGrid) void loadNextInfiniteBatch(filterRevision);
+  }
+
+  function updateMetadataNotices() {
+    const activeGrids = new Set();
+    if (isFilteringActive() && (needsMetadata() || paginationNeedsRetry)) {
+      const paginatedGrid = findPaginatedGrid(document);
+      for (const grid of document.querySelectorAll("div.grid")) {
+        const unresolved = new Set();
+        for (const entry of getGridItems(grid)) {
+          if (isHomePlaceholderItem(entry)) continue;
+          const { card } = entry;
+          if (findLayoutItem(card).classList.contains(LABEL_HIDDEN_CLASS)) continue;
+          const id = getCardItemId(card, location.href);
+          const record = metadataClient.get(id);
+          if (metadataDecision(id) === "unverified" ||
+              (!metadataFilteringEnabled() && (["error", "missing"].includes(record.status) ||
+                (record.status === "ready" && !Array.isArray(record.data.actresses))))) unresolved.add(id);
+        }
+        if (grid === paginatedGrid) {
+          for (const id of stalledPageIds) unresolved.add(id);
+        }
+        const pageFailed = paginationNeedsRetry && grid === paginatedGrid;
+        if (unresolved.size === 0 && !pageFailed) continue;
+        activeGrids.add(grid);
+        let notice = metadataNotices.get(grid);
+        if (!notice) {
+          notice = document.createElement("button");
+          notice.type = "button";
+          notice.className = "missav-content-filter-retry";
+          grid.after(notice);
+          metadataNotices.set(grid, notice);
+        }
+        const text = unresolved.size === 0 ? "下一页未能加载。点击重试" : metadataFilteringEnabled()
+          ? `${unresolved.size} 部影片资料未能确认，暂未显示。点击重试`
+          : `${unresolved.size} 部影片姓名未能加载。点击重试`;
+        if (notice.textContent !== text) notice.textContent = text;
+        notice.onclick = () => retryMetadata([...unresolved]);
+      }
+    }
+    for (const [grid, notice] of metadataNotices) {
+      if (activeGrids.has(grid)) continue;
+      notice.remove();
+      metadataNotices.delete(grid);
+    }
+  }
+
+  async function processPageEntries(entries, baseUrl, revision, onPassed) {
+    const visibleEligible = applyVisibleLabelStage(entries, false);
     const withIds = visibleEligible.map((entry) => ({
       ...entry,
       itemId: getCardItemId(entry.card, baseUrl)
     }));
-    const byId = await ensureMetadata(withIds.map(({ itemId }) => itemId));
-    if (revision !== filterRevision) return [];
-
-    return withIds.filter(({ itemId }) =>
-      !itemId || metadataPassesGenreRules(byId[itemId])
-    );
+    const delivered = new Set();
+    const deliver = () => {
+      if (revision !== filterRevision || !isFilteringActive()) return;
+      for (const entry of withIds) {
+        if (delivered.has(entry) || metadataDecision(entry.itemId) !== "passed") continue;
+        delivered.add(entry);
+        onPassed(entry);
+      }
+    };
+    const ids = withIds.map(({ itemId }) => itemId).filter(Boolean);
+    if (needsMetadata()) metadataClient.request(ids);
+    deliver();
+    // Names-only display does not hold up page insertion or pagination.
+    if (metadataFilteringEnabled()) {
+      const unsubscribe = metadataClient.subscribe(deliver);
+      try { await metadataClient.settled(ids); }
+      finally { unsubscribe(); }
+      deliver();
+    }
+    if (revision !== filterRevision || !isFilteringActive()) return { cancelled: true, unresolved: [] };
+    const unresolved = withIds.filter(({ itemId }) => metadataDecision(itemId) === "unverified");
+    return { cancelled: false, unresolved: unresolved.map(({ itemId }) => itemId) };
   }
 
-  async function filterCurrentDocument(revision) {
+  function filterCurrentDocument() {
     const entries = [...document.querySelectorAll("div.thumbnail")]
       .map((card) => ({ item: findLayoutItem(card), card }));
-    const visibleEligible = prepareEntriesForFiltering(entries, true, location.href);
-
-    if (!isFilteringActive() || !genreFilteringEnabled() || visibleEligible.length === 0) {
-      return revision === filterRevision;
-    }
-
-    const withIds = visibleEligible.map((entry) => ({
-      ...entry,
-      itemId: getCardItemId(entry.card, location.href)
-    }));
-    const byId = await ensureMetadata(withIds.map(({ itemId }) => itemId));
-    if (revision !== filterRevision) return false;
-
-    for (const { card, itemId } of withIds) {
-      setCardHiddenForReason(
-        card,
-        GENRE_HIDDEN_CLASS,
-        Boolean(itemId) && !metadataPassesGenreRules(byId[itemId])
-      );
-      setCardPending(card, false);
-      markCardDecisionComplete(card);
-    }
-    return true;
+    prepareEntriesForFiltering(entries, true, location.href);
+    updateMetadataNotices();
   }
 
   function activateImportedImages(root) {
@@ -630,9 +734,9 @@
       .length;
   }
 
-  function isHomeGridFullyProcessed(grid) {
+  function isHomeGridSettled(grid) {
     return getHomeContentEntries(grid)
-      .every(({ card }) => cardDecisionRevisions.get(card) === filterRevision);
+      .every(({ card }) => cardSettledRevisions.get(card) === filterRevision);
   }
 
   function releaseHomeGrid(grid) {
@@ -695,13 +799,17 @@
 
       const currentControl = findLoadMoreControl(grid);
       const attempts = homeGridAttempts.get(grid) ?? 0;
+      const dataUnsettled = getHomeContentEntries(grid).some(({ card }) => {
+        const item = findLayoutItem(card);
+        return item.classList.contains(PENDING_CLASS) || item.classList.contains(UNVERIFIED_CLASS);
+      });
       const terminal =
         getVisibleHomeGridCount(grid) >= MIN_HOME_VISIBLE_ITEMS ||
         !currentControl ||
-        attempts >= MAX_HOME_REFILL_CLICKS;
+        attempts >= MAX_HOME_REFILL_CLICKS || dataUnsettled;
       if (
         !homeGridPending.has(grid) &&
-        isHomeGridFullyProcessed(grid) &&
+        (isHomeGridSettled(grid) || dataUnsettled) &&
         terminal
       ) {
         setHomeGridSettling(grid, currentControl ?? control, false);
@@ -715,7 +823,7 @@
     for (const grid of document.querySelectorAll("div.grid")) {
       const control = findLoadMoreControl(grid);
       const visibleCount = getVisibleHomeGridCount(grid);
-      const fullyProcessed = isHomeGridFullyProcessed(grid);
+      const fullyProcessed = isHomeGridSettled(grid);
       const attempts = homeGridAttempts.get(grid) ?? 0;
 
       if (!isFilteringActive()) {
@@ -726,9 +834,20 @@
       }
 
       if (!fullyProcessed) {
-        if (control || grid.classList.contains(SETTLING_GRID_CLASS)) {
+        const waitingForData = getHomeContentEntries(grid).some(({ card }) =>
+          findLayoutItem(card).classList.contains(PENDING_CLASS));
+        if (waitingForData) {
+          // Keep an existing native-label settling window, but release it on
+          // its own timer even if metadata is still pending. Other grids proceed.
+          if (grid.classList.contains(SETTLING_GRID_CLASS)) scheduleHomeGridReveal(grid, control);
+        } else if (control || grid.classList.contains(SETTLING_GRID_CLASS)) {
           setHomeGridSettling(grid, control, true);
         }
+        continue;
+      }
+
+      if (getHomeContentEntries(grid).some(({ card }) => findLayoutItem(card).classList.contains(UNVERIFIED_CLASS))) {
+        if (grid.classList.contains(SETTLING_GRID_CLASS)) scheduleHomeGridReveal(grid, control);
         continue;
       }
 
@@ -815,14 +934,16 @@
     }
   }
 
-  function appendImportedItem(grid, item) {
+  function appendImportedItem(grid, item, baseUrl) {
     const importedItem = document.importNode(item, true);
     importedItem.setAttribute(REFILL_ATTRIBUTE, "true");
     activateImportedImages(importedItem);
     const importedCard = getCardFromGridItem(importedItem);
+    // Reset the clone before committing its final state, never after rendering.
     clearCardFilterState(importedCard);
     grid.append(importedItem);
     topologyRevision += 1;
+    applyCardMetadata(importedCard, getCardItemId(importedCard, baseUrl));
   }
 
   async function fetchPageDocument(url) {
@@ -833,14 +954,15 @@
         const response = await fetch(url, { credentials: "same-origin" });
         if (!response.ok) return null;
         html = await response.text();
-        pageHtmlCache.set(url, html);
       } catch {
         return null;
       }
     }
 
     const parsed = new DOMParser().parseFromString(html, "text/html");
-    return MissavSiteLibrary.inspect(parsed, url).compatible ? parsed : null;
+    if (!MissavSiteLibrary.inspect(parsed, url).compatible || !findPaginatedGrid(parsed)) return null;
+    pageHtmlCache.set(url, html);
+    return parsed;
   }
 
   async function refillPaginatedGrid(revision) {
@@ -882,32 +1004,55 @@
 
       visitedPages.add(nextPageUrl);
       const pageDocument = await fetchPageDocument(nextPageUrl);
-      if (!pageDocument || revision !== filterRevision) return;
+      if (revision !== filterRevision) return;
+      if (!pageDocument) { paginationNeedsRetry = true; return; }
 
       const sourceGrid = findPaginatedGrid(pageDocument);
-      if (!sourceGrid) return;
+      if (!sourceGrid) { paginationNeedsRetry = true; return; }
 
-      const eligibleEntries = await filterEntriesByAllRules(
+      const result = await processPageEntries(
         getGridItems(sourceGrid),
         nextPageUrl,
-        revision
+        revision,
+        ({ item, card }) => {
+          if (visibleCount >= targetSize) return;
+          const cardKey = getCardKey(card, nextPageUrl);
+          if (cardKey && seenCardKeys.has(cardKey)) return;
+          appendImportedItem(grid, item, nextPageUrl);
+          if (cardKey) seenCardKeys.add(cardKey);
+          visibleCount += 1;
+        }
       );
-      if (revision !== filterRevision) return;
-
-      for (const { item, card } of eligibleEntries) {
-
-        const cardKey = getCardKey(card, nextPageUrl);
-        if (cardKey && seenCardKeys.has(cardKey)) continue;
-
-        appendImportedItem(grid, item);
-
-        if (cardKey) seenCardKeys.add(cardKey);
-        visibleCount += 1;
-        if (visibleCount >= targetSize) break;
+      if (result.cancelled) return;
+      if (result.unresolved.length > 0 && visibleCount < targetSize) {
+        for (const id of result.unresolved) stalledPageIds.add(id);
+        paginationNeedsRetry = true;
+        return;
       }
 
       nextPageUrl = getNextPageUrl(pageDocument, nextPageUrl);
     }
+  }
+
+  function startPaginatedRefill(revision) {
+    if (paginationNeedsRetry || paginationTask?.revision === revision) return;
+    const grid = findPaginatedGrid(document);
+    if (!grid || !getNextPageUrl(document, location.href)) return;
+    const native = getGridItems(grid).filter(({ item }) => !item.hasAttribute(REFILL_ATTRIBUTE));
+    if (native.some(({ card }) => {
+      const item = findLayoutItem(card);
+      return item.classList.contains(PENDING_CLASS) || item.classList.contains(UNVERIFIED_CLASS);
+    })) return;
+    const key = `${revision}:${native.length}:${native.filter((entry) => !isHiddenGridItem(entry)).length}`;
+    if (paginationRunKey === key) return;
+    paginationRunKey = key;
+    const task = { revision };
+    paginationTask = task;
+    void refillPaginatedGrid(revision).finally(() => {
+      if (paginationTask !== task) return;
+      paginationTask = null;
+      scheduleScan();
+    });
   }
 
   function setInfiniteStatus(message, state = "idle") {
@@ -921,6 +1066,7 @@
   async function loadNextInfiniteBatch(revision) {
     if (
       infiniteLoading ||
+      infiniteNeedsRetry ||
       !infiniteGrid ||
       !infiniteNextPageUrl ||
       revision !== filterRevision ||
@@ -931,6 +1077,8 @@
     }
 
     infiniteLoading = true;
+    const loadToken = {};
+    infiniteLoadToken = loadToken;
     setInfiniteStatus("正在筛选下一页…", "loading");
     let appendedCount = 0;
     let checkedPages = 0;
@@ -945,32 +1093,44 @@
 
         const pageUrl = infiniteNextPageUrl;
         const pageDocument = await fetchPageDocument(pageUrl);
+        if (revision !== filterRevision || infiniteLoadToken !== loadToken) return;
         if (!pageDocument) {
           setInfiniteStatus("加载失败，点击这里重试", "error");
+          infiniteNeedsRetry = true;
           return;
         }
 
         checkedPages += 1;
         const sourceGrid = findPaginatedGrid(pageDocument);
-        infiniteNextPageUrl = getNextPageUrl(pageDocument, pageUrl);
-        if (!sourceGrid) continue;
+        const nextPageUrl = getNextPageUrl(pageDocument, pageUrl);
+        if (!sourceGrid) {
+          setInfiniteStatus("下一页内容未能识别，点击重试", "error");
+          infiniteNeedsRetry = true;
+          return;
+        }
 
-        const eligibleEntries = await filterEntriesByAllRules(
+        const result = await processPageEntries(
           getGridItems(sourceGrid),
           pageUrl,
-          revision
+          revision,
+          ({ item, card }) => {
+            const cardKey = getCardKey(card, pageUrl);
+            if (cardKey && infiniteSeenCardKeys.has(cardKey)) return;
+            appendImportedItem(infiniteGrid, item, pageUrl);
+            if (cardKey) infiniteSeenCardKeys.add(cardKey);
+            appendedCount += 1;
+          }
         );
-        if (revision !== filterRevision) return;
-
-        for (const { item, card } of eligibleEntries) {
-
-          const cardKey = getCardKey(card, pageUrl);
-          if (cardKey && infiniteSeenCardKeys.has(cardKey)) continue;
-
-          appendImportedItem(infiniteGrid, item);
-          if (cardKey) infiniteSeenCardKeys.add(cardKey);
-          appendedCount += 1;
+        if (result.cancelled) return;
+        if (result.unresolved.length > 0) {
+          for (const id of result.unresolved) stalledPageIds.add(id);
+          infiniteNeedsRetry = true;
+          setInfiniteStatus("部分影片资料未能确认，点击重试", "error");
+          updateMetadataNotices();
+          return;
         }
+        // Commit the cursor only after the page's decisions have settled.
+        infiniteNextPageUrl = nextPageUrl;
       }
 
       if (!infiniteNextPageUrl) {
@@ -984,7 +1144,7 @@
         infiniteObserver?.observe(infiniteSentinel);
       }
     } finally {
-      infiniteLoading = false;
+      if (infiniteLoadToken === loadToken) infiniteLoading = false;
     }
   }
 
@@ -996,6 +1156,8 @@
     infiniteGrid = null;
     infiniteNextPageUrl = null;
     infiniteLoading = false;
+    infiniteLoadToken = null;
+    infiniteNeedsRetry = false;
     infiniteSeenCardKeys = new Set();
   }
 
@@ -1020,7 +1182,8 @@
     infiniteSentinel.className = "missav-content-filter-sentinel";
     infiniteSentinel.textContent = "继续向下滚动";
     infiniteSentinel.addEventListener("click", () => {
-      void loadNextInfiniteBatch(filterRevision);
+      if (infiniteNeedsRetry) retryMetadata([...stalledPageIds]);
+      else void loadNextInfiniteBatch(filterRevision);
     });
     grid.after(infiniteSentinel);
 
@@ -1050,9 +1213,10 @@
     for (const card of document.querySelectorAll("div.thumbnail")) {
       clearCardFilterState(card);
     }
+    updateMetadataNotices();
   }
 
-  async function runWorkLoop() {
+  function runWorkLoop() {
     if (refillInProgress) return;
 
     refillInProgress = true;
@@ -1064,14 +1228,14 @@
           continue;
         }
         const revision = filterRevision;
-        const settled = await filterCurrentDocument(revision);
-        if (!settled || revision !== filterRevision) continue;
+        filterCurrentDocument();
+        if (revision !== filterRevision) continue;
         refillHomeGrids();
         if (isFilteringActive() && settings.infiniteScroll) {
           setupInfiniteScroll(revision);
         } else {
           teardownInfiniteScroll();
-          await refillPaginatedGrid(revision);
+          startPaginatedRefill(revision);
         }
       }
     } finally {
@@ -1123,6 +1287,13 @@
   }
 
   function mutationAffectsVideoCards(mutation) {
+    const belongsToNames = (node) => {
+      const element = node?.nodeType === 1 ? node : node?.parentElement;
+      return Boolean(element?.closest?.(`.${ACTRESS_NAMES_CLASS}`));
+    };
+    if (belongsToNames(mutation?.target)) return false;
+    const changedNodes = [...(mutation?.addedNodes ?? []), ...(mutation?.removedNodes ?? [])];
+    if (mutation?.type === "childList" && changedNodes.length && changedNodes.every(belongsToNames)) return false;
     if (isInsideRefillItem(mutation?.target)) {
       return false;
     }
@@ -1236,6 +1407,9 @@
       scheduleScan();
       setTimeout(scheduleScan, 750);
     };
+    window.addEventListener("online", () => {
+      retryMetadata();
+    });
     if (document.readyState === "complete") scanAfterLoad();
     else window.addEventListener("load", scanAfterLoad, { once: true });
 
@@ -1267,6 +1441,17 @@
       }
 
       settings = sanitizeSettings(nextSettings);
+      const changedKeys = Object.keys(DEFAULT_SETTINGS).filter((key) => changes[key]);
+      if (changedKeys.length === 0) return;
+      if (changedKeys.every((key) => key === "showActressNames")) {
+        scheduleScan();
+        return;
+      }
+      metadataClient.invalidateUnresolved();
+      paginationRunKey = null;
+      paginationNeedsRetry = false;
+      paginationTask = null;
+      stalledPageIds.clear();
       filterRevision += 1;
       topologyRevision += 1;
       if (!isFilteringActive()) {

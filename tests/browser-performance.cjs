@@ -9,9 +9,15 @@ const root = path.join(__dirname, "..");
 const library = fs.readFileSync(path.join(root, "genre-library.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "content.css"), "utf8");
 const current = fs.readFileSync(path.join(root, "content.js"), "utf8");
-const baseline = execFileSync("git", ["show", "03d64ff:content.js"], { cwd: root, encoding: "utf8" });
+// An optional ref enables comparison; the default check needs no old history.
+const baseline = process.env.PERFORMANCE_BASELINE
+  ? execFileSync("git", ["show", `${process.env.PERFORMANCE_BASELINE}:content.js`], { cwd: root, encoding: "utf8" })
+  : null;
+if (process.argv.includes("baseline") && !baseline) {
+  throw new Error("Set PERFORMANCE_BASELINE to the Git ref to measure.");
+}
 
-async function install(page, source, count, home = false) {
+async function install(page, source, count, home = false, slow = false) {
   if (page.url() === "about:blank") {
     await page.route('https://missav.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
     await page.goto('https://missav.ai/new');
@@ -21,7 +27,7 @@ async function install(page, source, count, home = false) {
     .card { padding:8px;border:1px solid #888 }
     ${css}</style><main><div class="grid" id="grid"></div>
     ${home ? '<button id="more">载入更多</button>' : ""}</main>`);
-  await page.evaluate(({ count, home }) => {
+  await page.evaluate(({ count, home, slow }) => {
     window.makeCard = (id, blocked = false) => {
       const item = document.createElement("div");
       item.className = "card";
@@ -39,13 +45,16 @@ async function install(page, source, count, home = false) {
     window.chrome = {
       runtime: { sendMessage(message, callback) {
         metrics.messages += 1;
-        setTimeout(() => callback({ ok: true, items: Object.fromEntries(message.itemIds.map((id) =>
+        const reply = () => callback({ ok: true, items: Object.fromEntries(message.itemIds.map((id) =>
           [id, { genres: ["sample"], tags: [], type: "sample", duration: 100 }]
-        )) }), 40);
+        )) });
+        if (slow && metrics.messages > 1) window.releaseMetadata = reply;
+        else setTimeout(reply, 40);
       } },
       storage: {
         sync: { get(defaults, callback) {
-          callback({ ...defaults, blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] });
+          callback({ ...defaults, actressLimitEnabled: false, showActressNames: false,
+            blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] });
         } },
         onChanged: { addListener(listener) { window.changeSettings = listener; } }
       }
@@ -61,10 +70,11 @@ async function install(page, source, count, home = false) {
         more.disabled = false;
       }, 30);
     });
-  }, { count, home });
+  }, { count, home, slow });
   if (source === baseline) await page.evaluate(() => document.documentElement.setAttribute("data-viewing-assistant", ""));
   await page.addScriptTag({ path: path.join(root, "site-library.js") });
   await page.addScriptTag({ path: path.join(root, "label-library.js") });
+  await page.addScriptTag({ path: path.join(root, "metadata-client.js") });
   await page.addScriptTag({ content: library });
   return page.evaluate(async (source) => {
     const start = performance.now();
@@ -114,20 +124,20 @@ async function measure(browser, source, count) {
     const results = [];
     for (const count of process.argv.includes("home") ? [] : [300, 1000]) {
       for (let repeat = 0; repeat < 3; repeat += 1) {
-        results.push({ count, repeat, baseline: await measure(browser, baseline, count),
-          optimized: await measure(browser, current, count) });
+        results.push({ count, repeat, baseline: baseline ? await measure(browser, baseline, count) : null,
+          current: await measure(browser, current, count) });
       }
     }
     const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
     const summary = [300, 1000].filter((count) => results.some((r) => r.count === count)).map((count) => {
       const runs = results.filter((r) => r.count === count);
       return { count,
-        initialMs: { baseline: median(runs.map((r) => r.baseline.initial.ms)),
-          optimized: median(runs.map((r) => r.optimized.initial.ms)) },
-        insertionMs: { baseline: median(runs.map((r) => r.baseline.insertion.ms)),
-          optimized: median(runs.map((r) => r.optimized.insertion.ms)) },
-        initialGridEnumerations: { baseline: runs[0].baseline.initial.gridEnumerations,
-          optimized: runs[0].optimized.initial.gridEnumerations } };
+        initialMs: { baseline: baseline ? median(runs.map((r) => r.baseline.initial.ms)) : undefined,
+          current: median(runs.map((r) => r.current.initial.ms)) },
+        insertionMs: { baseline: baseline ? median(runs.map((r) => r.baseline.insertion.ms)) : undefined,
+          current: median(runs.map((r) => r.current.insertion.ms)) },
+        initialGridEnumerations: { baseline: runs[0].baseline?.initial.gridEnumerations,
+          current: runs[0].current.initial.gridEnumerations } };
     });
     console.log(JSON.stringify({ benchmarkMedians: summary }, null, 2));
     const home = await browser.newPage();
@@ -166,5 +176,20 @@ async function measure(browser, source, count) {
       assert.equal(await home.evaluate(() => metrics.clicks), 1);
       console.log(JSON.stringify({ homepageToggle: 'restores native cards and resumes filtering' }));
     } finally { await home.close(); }
+    const slowHome = await browser.newPage();
+    try {
+      await install(slowHome, current, 12, true, true);
+      await slowHome.waitForFunction(() => window.releaseMetadata &&
+        !grid.classList.contains('missav-content-filter-grid-settling'), null, { timeout: 6000 });
+      assert.equal(await slowHome.evaluate(() => metrics.clicks), 1);
+      assert.ok(await slowHome.locator('.missav-content-filter-pending').count() > 0);
+      assert.equal(await slowHome.evaluate(() => [...grid.children].filter(item => getComputedStyle(item).display !== 'none').length), 6,
+        'native label settling finishes independently and reveals known cards while data is still pending');
+      await slowHome.evaluate(() => releaseMetadata());
+      await slowHome.waitForFunction(() => !document.querySelector('.missav-content-filter-pending'));
+      assert.equal(await slowHome.evaluate(() => metrics.blockedPeak), 0);
+      assert.equal(await slowHome.evaluate(() => [...grid.children].filter(item => getComputedStyle(item).display !== 'none').length), 9);
+      console.log(JSON.stringify({ homepageSlowData: 'native settling completes while metadata remains pending' }));
+    } finally { await slowHome.close(); }
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

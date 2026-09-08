@@ -323,7 +323,8 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     storage: {
       sync: {
         get(defaults, callback) {
-          callback({ ...defaults, ...storedSettings });
+          // Existing scenarios isolate label/genre behavior; cast scenarios opt in below.
+          callback({ ...defaults, genreExcludeRules: [], actressLimitEnabled: false, showActressNames: false, ...storedSettings });
         }
       },
       onChanged: {
@@ -372,6 +373,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     }
   };
   vm.runInNewContext(genreLibrarySource, context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "metadata-client.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "label-library.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "site-library.js"), "utf8"), context);
   vm.runInNewContext(source, context);
@@ -1247,7 +1249,7 @@ test("关闭连续滚动后清理追加项并恢复单页补足模式", async ()
 test("默认排除组合规则会隐藏命中内页类型的卡片", async () => {
   const detailUrl = "https://missav.ai/pets-071";
   const card = makeCard([], { href: detailUrl });
-  const runtime = execute(makePage([card]), {}, {
+  const runtime = execute(makePage([card]), { genreExcludeRules: ["group:gender-diverse"] }, {
     metadata: {
       "pets-071": {
         genres: ["女装・男の娘", "ニューハーフ"],

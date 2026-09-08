@@ -34,6 +34,32 @@ test("动态发现分类会去重并加入筛选库", () => {
   assert.equal(options.some((option) => option.label === "新分類"), true);
 });
 
+test("中文名称和旧日文规则对应同一类型，不误匹配相似名称", () => {
+  const library = loadLibrary();
+  const japanese = library.valueRule("ハイビジョン");
+  const chinese = library.valueRule("高清");
+  assert.equal(library.normalizeRule(chinese), japanese);
+  assert.equal(library.matches(chinese, ["ハイビジョン"]), true);
+  assert.equal(library.matches(japanese, ["高清"]), true);
+  assert.equal(library.matches(chinese, ["4K"]), false);
+  assert.equal(library.matches(chinese, ["高清修复"]), false);
+  const options = library.options(["高清", "ハイビジョン", "獨家", "独家"]);
+  assert.equal(options.filter(option => option.label === "高清").length, 1);
+  assert.equal(options.filter(option => option.label === "独家").length, 1);
+  assert.equal(options.some(option => /[\u3040-\u30ff]/u.test(option.label)), false);
+  for (const option of options) {
+    assert.equal(library.normalizeRule(library.normalizeRule(option.rule)), library.normalizeRule(option.rule));
+  }
+});
+
+test("未收录的新类型保留原值，不猜测翻译或扩大匹配", () => {
+  const library = loadLibrary();
+  const value = "新分类-X";
+  assert.equal(library.options([value]).some(option => option.label === value), true);
+  assert.equal(library.matches(library.valueRule(value), [value]), true);
+  assert.equal(library.matches(library.valueRule(value), ["新分类-X2"]), false);
+});
+
 test("四小时以上按接口时长秒数判断，并迁移旧文字规则", () => {
   const library = loadLibrary();
   const durationRule = library.groupRule("duration-4h-plus");

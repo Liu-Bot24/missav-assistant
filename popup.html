@@ -113,6 +113,34 @@
         </div>
       </section>
 
+      <section class="panel actress-panel" aria-labelledby="actressTitle">
+        <div class="section-heading">
+          <h2 id="actressTitle">女优筛选</h2>
+        </div>
+        <p id="actressExplainer" class="genre-explainer">同一演员的不同名字合并计数。</p>
+        <div class="actress-control">
+          <label class="actress-toggle" for="actressLimitEnabled">
+            <span>按人数隐藏</span>
+            <span class="switch switch-small">
+              <input id="actressLimitEnabled" type="checkbox">
+              <span class="switch-track" aria-hidden="true"></span>
+            </span>
+          </label>
+          <label class="actress-limit" for="maxActresses">
+            <span>超过</span>
+            <input id="maxActresses" type="number" min="0" step="1" value="3" required aria-label="女优人数上限">
+            <span>人时隐藏</span>
+          </label>
+        </div>
+        <label class="actress-control actress-toggle" for="showActressNames">
+          <span>封面显示姓名<small>左上角显示前三位，过长时省略</small></span>
+          <span class="switch switch-small">
+            <input id="showActressNames" type="checkbox">
+            <span class="switch-track" aria-hidden="true"></span>
+          </span>
+        </label>
+      </section>
+
       <label class="scroll-control" title="关闭后，首页保持原样，其他列表页继续筛选">
         <span>首页生效<small>在首页应用筛选规则</small></span>
         <span class="switch switch-small">

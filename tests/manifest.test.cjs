@@ -9,9 +9,9 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "u
 test("Manifest V3 正确连接设置弹窗与存储权限", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "观看小助手");
-  assert.equal(manifest.version, "1.0.0");
+  assert.equal(manifest.version, "1.0.1");
   assert.equal(manifest.action.default_popup, "popup.html");
-  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "content.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "metadata-client.js", "content.js"]);
   assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://client-rapi-missav.recombee.com/*"
@@ -33,7 +33,12 @@ test("Manifest 引用的本地资源全部存在", () => {
     ...manifest.content_scripts[0].css,
     ...manifest.content_scripts[0].js,
     "popup.css",
-    "popup.js"
+    "popup.js",
+    "actress-data.js",
+    "actress-library.js",
+    "third-party/amane/LICENSE",
+    "third-party/amane/mapping_actor.xml",
+    "THIRD_PARTY_NOTICES.md"
   ];
 
   for (const file of referencedFiles) {

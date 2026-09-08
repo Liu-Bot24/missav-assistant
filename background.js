@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("genre-library.js");
+importScripts("genre-library.js", "actress-data.js", "actress-library.js");
 
 const DATABASE_ID = "missav-default";
 const API_HOST = "https://client-rapi-missav.recombee.com";
@@ -33,7 +33,7 @@ function normalizeItemIds(values) {
 }
 
 function sanitizeMetadata(value) {
-  if (!value || !Array.isArray(value.genres) || !Array.isArray(value.tags)) {
+  if (!value || !["genres", "tags", "actresses"].every((key) => Object.hasOwn(value, key))) {
     return null;
   }
 
@@ -41,13 +41,24 @@ function sanitizeMetadata(value) {
   const duration = rawDuration === null || rawDuration === undefined || rawDuration === ""
     ? null
     : Number(rawDuration);
+  const actresses = Array.isArray(value.actresses)
+    ? value.actresses.filter((name) => typeof name === "string" && name.trim()).map((name) => name.trim())
+    : null;
 
   return {
-    genres: value.genres.map(String),
-    tags: value.tags.map(String),
-    type: typeof value.type === "string" ? value.type : "",
-    duration: Number.isFinite(duration) ? duration : null
+    genres: Array.isArray(value.genres) ? value.genres.map(String) : null,
+    tags: Array.isArray(value.tags) ? value.tags.map(String) : null,
+    type: typeof value.type === "string" ? value.type : null,
+    duration: Number.isFinite(duration) ? duration : null,
+    actresses,
+    cast: MissavActressLibrary.resolve(actresses)
   };
+}
+
+function isCompleteMetadata(metadata) {
+  return metadata && Array.isArray(metadata.genres) && Array.isArray(metadata.tags) &&
+    Array.isArray(metadata.actresses) && typeof metadata.type === "string" &&
+    Number.isFinite(metadata.duration);
 }
 
 async function fetchMetadata(itemIds) {
@@ -61,6 +72,7 @@ async function fetchMetadata(itemIds) {
     `${API_HOST}${unsignedPath}&frontend_sign=${signature}`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(15000),
       headers: {
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -73,7 +85,7 @@ async function fetchMetadata(itemIds) {
             searchQuery: id,
             count: 10,
             returnProperties: true,
-            includedProperties: ["genres", "tags", "type", "duration"]
+            includedProperties: ["genres", "tags", "type", "duration", "actresses"]
           }
         }))
       })
@@ -89,22 +101,22 @@ async function fetchMetadata(itemIds) {
 
   for (let index = 0; index < ids.length; index += 1) {
     const entry = batch[index];
-    const exact = entry?.code === 200
-      ? entry.json?.recomms?.find((item) => item.id === ids[index])
-      : null;
+    // Do not turn a failed subrequest into a successful "record not found".
+    // Missing keys are retried by the content script; explicit nulls are not.
+    if (entry?.code !== 200 || !Array.isArray(entry.json?.recomms)) continue;
+    const exact = entry.json.recomms.find((item) => item.id === ids[index]);
     if (!exact?.values) {
       result[ids[index]] = null;
       continue;
     }
 
-    result[ids[index]] = {
-      genres: Array.isArray(exact.values.genres) ? exact.values.genres : [],
-      tags: Array.isArray(exact.values.tags) ? exact.values.tags : [],
-      type: typeof exact.values.type === "string" ? exact.values.type : "",
-      duration: Number.isFinite(Number(exact.values.duration))
-        ? Number(exact.values.duration)
-        : null
-    };
+    result[ids[index]] = sanitizeMetadata({
+      genres: exact.values.genres ?? null,
+      tags: exact.values.tags ?? null,
+      type: exact.values.type ?? null,
+      duration: exact.values.duration,
+      actresses: Array.isArray(exact.values.actresses) ? exact.values.actresses : null
+    });
   }
 
   return result;
@@ -143,7 +155,7 @@ chrome.storage.onChanged?.addListener((changes, areaName) => {
 function saveMetadataCache(metadataById) {
   const additions = Object.entries(metadataById)
     .map(([id, metadata]) => [id, sanitizeMetadata(metadata)])
-    .filter(([, metadata]) => Boolean(metadata));
+    .filter(([, metadata]) => isCompleteMetadata(metadata));
   if (additions.length === 0) return Promise.resolve();
 
   metadataCacheWrite = metadataCacheWrite.catch(() => {}).then(async () => {
@@ -156,7 +168,7 @@ function saveMetadataCache(metadataById) {
     }
 
     const retained = Object.entries(cache)
-      .filter(([, record]) => Boolean(sanitizeMetadata(record)))
+      .filter(([, record]) => isCompleteMetadata(sanitizeMetadata(record)))
       .sort((left, right) => Number(right[1].cachedAt ?? 0) - Number(left[1].cachedAt ?? 0))
       .slice(0, MAX_METADATA_CACHE_ITEMS);
     const prunedCache = Object.fromEntries(retained);
@@ -182,7 +194,7 @@ async function queryMetadata(itemIds) {
 
   for (const id of ids) {
     const cached = sanitizeMetadata(cache?.[id]);
-    if (cached) metadataById[id] = cached;
+    if (isCompleteMetadata(cached)) metadataById[id] = cached;
     else missingIds.push(id);
   }
 
@@ -199,9 +211,9 @@ async function queryMetadata(itemIds) {
     }
     const fetchedPairs = await Promise.all(missingIds.map(async (id) => {
       const fetched = await metadataInFlight.get(id);
-      return [id, fetched[id] ?? null];
+      return Object.hasOwn(fetched, id) ? [id, fetched[id]] : null;
     }));
-    Object.assign(metadataById, Object.fromEntries(fetchedPairs));
+    Object.assign(metadataById, Object.fromEntries(fetchedPairs.filter(Boolean)));
   }
 
   return metadataById;
@@ -213,8 +225,8 @@ function saveDiscoveredTypes(metadataById) {
   const additions = Object.values(metadataById)
     .filter(Boolean)
     .flatMap((metadata) => [
-      ...metadata.genres,
-      ...metadata.tags,
+      ...(metadata.genres ?? []),
+      ...(metadata.tags ?? []),
       ...(metadata.type ? [metadata.type] : [])
     ])
     .map((value) => String(value).trim())

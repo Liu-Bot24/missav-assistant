@@ -6,6 +6,9 @@
     homepageEnabled: true,
     hideUntagged: false,
     infiniteScroll: false,
+    actressLimitEnabled: true,
+    maxActresses: 3,
+    showActressNames: true,
     blockedPresets: ["uncensored"],
     genreIncludeRules: [],
     genreExcludeRules: ["group:gender-diverse"]
@@ -16,7 +19,6 @@
   let metadataCacheCount = 0;
   let saveTimer;
   let openGenrePicker = null;
-  const MAX_SUGGESTIONS = 6;
   const syncStorage = globalThis.chrome?.storage?.sync;
   const localStorageApi = globalThis.chrome?.storage?.local;
 
@@ -25,6 +27,10 @@
     homepageEnabled: document.querySelector("#homepageEnabled"),
     hideUntagged: document.querySelector("#hideUntagged"),
     infiniteScroll: document.querySelector("#infiniteScroll"),
+    actressLimitEnabled: document.querySelector("#actressLimitEnabled"),
+    maxActresses: document.querySelector("#maxActresses"),
+    showActressNames: document.querySelector("#showActressNames"),
+    actressExplainer: document.querySelector("#actressExplainer"),
     presetInputs: [...document.querySelectorAll('input[name="preset"]')],
     genreIncludeField: document.querySelector("#genreIncludeField"),
     genreIncludeSearch: document.querySelector("#genreIncludeSearch"),
@@ -54,6 +60,11 @@
       homepageEnabled: value?.homepageEnabled !== false,
       hideUntagged: value?.hideUntagged === true,
       infiniteScroll: value?.infiniteScroll === true,
+      actressLimitEnabled: value?.actressLimitEnabled !== false,
+      maxActresses: Number.isSafeInteger(Number(value?.maxActresses)) && Number(value.maxActresses) >= 0 &&
+        value.maxActresses !== null && value.maxActresses !== ""
+        ? Number(value.maxActresses) : DEFAULT_SETTINGS.maxActresses,
+      showActressNames: value?.showActressNames !== false,
       blockedPresets: MissavLabelLibrary.sanitizePresets(value?.blockedPresets),
       genreIncludeRules: sanitizeGenreRules(
         value?.genreIncludeRules,
@@ -108,7 +119,8 @@
     const query = normalizeForComparison(picker.input.value);
     return options.filter((option) =>
       !picker.rules.includes(option.rule) &&
-      (!query || normalizeForComparison(option.label).includes(query))
+      (!query || [option.label, ...(option.aliases ?? [])]
+        .some((label) => normalizeForComparison(label).includes(query)))
     );
   }
 
@@ -138,6 +150,7 @@
   function renderGenreSuggestions(mode, options) {
     const picker = genrePickerElements(mode);
     const matches = matchingGenreOptions(mode, options);
+    picker.field.closest(".genre-picker").classList.toggle("is-open", openGenrePicker === mode);
     picker.suggestions.replaceChildren();
 
     if (openGenrePicker !== mode) {
@@ -152,7 +165,7 @@
       empty.textContent = "没有匹配的分类";
       picker.suggestions.append(empty);
     } else {
-      for (const option of matches.slice(0, MAX_SUGGESTIONS)) {
+      for (const option of matches) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `genre-suggestion${option.kind === "group" ? " is-group" : ""}`;
@@ -179,13 +192,6 @@
         });
         picker.suggestions.append(button);
       }
-
-      if (matches.length > MAX_SUGGESTIONS) {
-        const more = document.createElement("p");
-        more.className = "genre-suggestion-more";
-        more.textContent = `另有 ${matches.length - MAX_SUGGESTIONS} 项，继续输入可缩小范围`;
-        picker.suggestions.append(more);
-      }
     }
 
     picker.suggestions.hidden = false;
@@ -206,6 +212,10 @@
     elements.homepageEnabled.checked = settings.homepageEnabled;
     elements.hideUntagged.checked = settings.hideUntagged;
     elements.infiniteScroll.checked = settings.infiniteScroll;
+    elements.actressLimitEnabled.checked = settings.actressLimitEnabled;
+    elements.maxActresses.value = settings.maxActresses;
+    elements.maxActresses.disabled = !settings.actressLimitEnabled;
+    elements.showActressNames.checked = settings.showActressNames;
 
     for (const input of elements.presetInputs) {
       input.checked = settings.blockedPresets.includes(input.value);
@@ -218,7 +228,7 @@
       settings.blockedPresets.length +
       settings.genreIncludeRules.length +
       settings.genreExcludeRules.length +
-      (settings.hideUntagged ? 1 : 0);
+      (settings.hideUntagged ? 1 : 0) + (settings.actressLimitEnabled ? 1 : 0);
     elements.ruleSummary.textContent = settings.enabled
       ? `当前启用 ${ruleCount} 条规则`
       : `已保留 ${ruleCount} 条规则，重新开启后生效`;
@@ -235,16 +245,20 @@
       else if (siteStatus.pageKind === "detail") message = "当前为播放详情页，不执行筛选。";
       else if (siteStatus.pageKind === "home" && !settings.homepageEnabled) message = "当前首页已关闭筛选，其他列表页仍按规则生效。";
       else message = siteStatus.metadata === "missav"
-        ? "当前页面支持标签与分类筛选。"
-        : "已识别兼容模板，基础功能可用；分类筛选尚未适配。";
+        ? "当前页面支持标签、分类与女优筛选。"
+        : "已识别兼容模板，基础功能可用；分类与女优筛选尚未适配。";
     }
     elements.siteStatus.textContent = message;
     const basicOnly = siteStatus?.compatible && !siteStatus.metadata;
     elements.genreExplainer.textContent = basicOnly
       ? "此站尚未适配分类数据，以下条件仅在支持分类的网站生效。"
       : "按视频的内页分类筛选，隐藏条件优先。";
+    elements.actressExplainer.textContent = basicOnly
+      ? "此站尚未适配女优数据，以下设置在支持的网站生效。"
+      : "同一演员的不同名字合并计数。";
     if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.blockedPresets.length +
-      settings.genreIncludeRules.length + settings.genreExcludeRules.length + (settings.hideUntagged ? 1 : 0)} 条规则`;
+      settings.genreIncludeRules.length + settings.genreExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
+      (settings.actressLimitEnabled ? 1 : 0)} 条规则`;
   }
 
   function readSiteStatus() {
@@ -291,6 +305,26 @@
 
   elements.infiniteScroll.addEventListener("change", () => {
     settings.infiniteScroll = elements.infiniteScroll.checked;
+    persist();
+  });
+
+  elements.actressLimitEnabled.addEventListener("change", () => {
+    settings.actressLimitEnabled = elements.actressLimitEnabled.checked;
+    persist();
+  });
+
+  elements.showActressNames.addEventListener("change", () => {
+    settings.showActressNames = elements.showActressNames.checked;
+    persist();
+  });
+
+  elements.maxActresses.addEventListener("change", () => {
+    if (!elements.maxActresses.checkValidity() || elements.maxActresses.value === "") {
+      elements.maxActresses.reportValidity();
+      elements.maxActresses.value = settings.maxActresses;
+      return;
+    }
+    settings.maxActresses = Number(elements.maxActresses.value);
     persist();
   });
 

@@ -234,7 +234,7 @@ input[type="text"]:focus-visible {
   border-top: 1px solid #edf0f4;
 }
 
-.genre-picker:focus-within {
+.genre-picker.is-open {
   z-index: 5;
 }
 
@@ -348,7 +348,10 @@ input[type="text"]:focus-visible {
   right: 14px;
   left: 14px;
   z-index: 10;
-  overflow: hidden;
+  max-height: 240px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   border: 1px solid #cfd4de;
   border-radius: 8px;
   background: #fff;
@@ -417,18 +420,12 @@ input[type="text"]:focus-visible {
   place-items: center;
 }
 
-.genre-suggestion-empty,
-.genre-suggestion-more {
+.genre-suggestion-empty {
   margin: 0;
   padding: 9px 10px;
   color: var(--muted);
   font-size: 10px;
   text-align: center;
-}
-
-.genre-suggestion-more {
-  border-top: 1px solid #edf0f4;
-  background: #fafbfc;
 }
 
 .scroll-control {
@@ -439,6 +436,51 @@ input[type="text"]:focus-visible {
   padding: 6px 2px 2px;
   cursor: pointer;
   font-size: 12px;
+}
+
+.actress-control {
+  padding: 10px 14px;
+  border-top: 1px solid #edf0f4;
+}
+
+.actress-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.actress-toggle small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.actress-limit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.actress-limit input {
+  width: 70px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid #cfd4de;
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.actress-limit input:disabled {
+  color: var(--muted);
+  background: var(--paper);
 }
 
 .scroll-control small {

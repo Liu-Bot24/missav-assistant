@@ -2,6 +2,35 @@
   display: none !important;
 }
 
+[data-viewing-assistant] .missav-actress-host {
+  position: relative;
+}
+
+[data-viewing-assistant] .missav-actress-names {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: auto;
+  bottom: auto;
+  width: max-content;
+  height: auto;
+  z-index: 3;
+  box-sizing: border-box;
+  max-width: calc(100% - 12px);
+  max-height: calc(100% - 12px);
+  padding: 3px 7px;
+  overflow: hidden;
+  border-radius: 4px;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.84);
+  font: 600 24px/1.3 "Microsoft YaHei", system-ui, sans-serif;
+  text-align: left;
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 [data-viewing-assistant] .missav-content-filter-grid-settling {
   position: relative;
   min-height: 180px;
@@ -27,6 +56,19 @@
 [data-viewing-assistant] .missav-content-filter-control-busy {
   visibility: hidden !important;
   pointer-events: none !important;
+}
+
+[data-viewing-assistant] .missav-content-filter-retry {
+  display: block;
+  max-width: 100%;
+  margin: 12px auto;
+  padding: 9px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 8px;
+  color: #fcd34d;
+  background: #1e293b;
+  cursor: pointer;
+  font: 500 13px/1.5 system-ui, sans-serif;
 }
 
 [data-viewing-assistant] .missav-content-filter-sentinel {
