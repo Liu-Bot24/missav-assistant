@@ -19,7 +19,8 @@ if (process.argv.includes("baseline") && !baseline) {
 
 async function install(page, source, count, home = false, slow = false) {
   if (page.url() === "about:blank") {
-    await page.route('https://missav.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.route('**/*', route => new URL(route.request().url()).hostname === 'missav.ai'
+      ? route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }) : route.abort());
     await page.goto('https://missav.ai/new');
   }
   await page.setContent(`<!doctype html><style>
@@ -42,6 +43,8 @@ async function install(page, source, count, home = false, slow = false) {
       if (this.id === "grid" && selector === "div.thumbnail") metrics.gridEnumerations += 1;
       return query.call(this, selector);
     };
+    window.fixtureSettings = { actressLimitEnabled: false, showActressNames: false,
+      blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] };
     window.chrome = {
       runtime: { sendMessage(message, callback) {
         metrics.messages += 1;
@@ -52,11 +55,15 @@ async function install(page, source, count, home = false, slow = false) {
         else setTimeout(reply, 40);
       } },
       storage: {
-        sync: { get(defaults, callback) {
-          callback({ ...defaults, actressLimitEnabled: false, showActressNames: false,
-            blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] });
+        sync: { get(defaults, callback) { callback({ ...defaults, ...window.fixtureSettings }); } },
+        local: { get(_keys, callback) {
+          callback({ missavSettingsStorageMode: 'local', missavLocalSettings: window.fixtureSettings });
         } },
-        onChanged: { addListener(listener) { window.changeSettings = listener; } }
+        onChanged: { addListener(listener) { window.changeSettings = changes => {
+          for (const [key, change] of Object.entries(changes)) window.fixtureSettings[key] = change.newValue;
+          listener({ missavLocalSettings: { newValue: window.fixtureSettings } }, 'local');
+          listener(changes, 'sync');
+        }; } }
       }
     };
     if (home) more.addEventListener("click", () => {
@@ -76,6 +83,7 @@ async function install(page, source, count, home = false, slow = false) {
   await page.addScriptTag({ path: path.join(root, "label-library.js") });
   await page.addScriptTag({ path: path.join(root, "metadata-client.js") });
   await page.addScriptTag({ content: library });
+  await page.addScriptTag({ path: path.join(root, "settings-storage.js") });
   return page.evaluate(async (source) => {
     const start = performance.now();
     (0, eval)(source);
@@ -141,7 +149,8 @@ async function measure(browser, source, count) {
     });
     console.log(JSON.stringify({ benchmarkMedians: summary }, null, 2));
     const home = await browser.newPage();
-    await home.route('https://missav.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await home.route('**/*', route => new URL(route.request().url()).hostname === 'missav.ai'
+      ? route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }) : route.abort());
     await home.goto('https://missav.ai/cn');
     try {
       await install(home, process.argv.includes("baseline") ? baseline : current, 12, true);

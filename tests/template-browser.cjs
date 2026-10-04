@@ -18,7 +18,7 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
 (async () => {
   const profile = fs.mkdtempSync(path.join(out, 'profile-'));
   const context = await chromium.launchPersistentContext(profile, {
-    headless: true, viewport: { width: 900, height: 650 },
+    channel: "chromium", headless: true, viewport: { width: 900, height: 650 },
     args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
     ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
   });

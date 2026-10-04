@@ -1,0 +1,44 @@
+name: Isolated audit regression
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Syntax checks
+        run: |
+          for file in *.js tests/*.cjs; do node --check "$file"; done
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [browser, popup, genre-picker, actresses, pipeline, templates, audit-browser]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Run isolated fixture suite
+        run: npm run test:${{ matrix.suite }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixture-screenshots-${{ matrix.suite }}
+          path: output/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7

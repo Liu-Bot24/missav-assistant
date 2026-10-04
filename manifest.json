@@ -36,6 +36,7 @@
         "label-library.js",
         "genre-library.js",
         "metadata-client.js",
+        "settings-storage.js",
         "content.js"
       ],
       "run_at": "document_start"

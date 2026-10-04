@@ -591,3 +591,74 @@ footer button:hover {
   font-size: 11px;
   line-height: 1.6;
 }
+
+
+.settings-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-fields:disabled {
+  opacity: 0.65;
+}
+
+.storage-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+}
+
+.storage-panel p {
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.storage-panel button {
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.storage-actions {
+  display: grid;
+  gap: 7px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#saveState {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+#saveState.is-error,
+#cacheState.is-error {
+  color: #a62e50;
+}
+
+footer {
+  gap: 10px;
+  align-items: flex-start;
+}
+
+footer button {
+  flex: 0 0 auto;
+}

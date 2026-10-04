@@ -39,7 +39,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
 (async () => {
   const profile = fs.mkdtempSync(path.join(out, 'profile-'));
   const context = await chromium.launchPersistentContext(profile, {
-    headless: true, viewport: { width: 1440, height: 900 },
+    channel: "chromium", headless: true, viewport: { width: 1440, height: 900 },
     args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
     ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
   });

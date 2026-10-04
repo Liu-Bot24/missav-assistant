@@ -18,8 +18,21 @@
   let siteStatus = null;
   let metadataCacheCount = 0;
   let saveTimer;
+  let readGeneration = 0;
+  let metadataReadGeneration = 0;
+  let readState = "loading";
+  let storageMode = "local";
+  let storageBusy = false;
+  let saveRevision = 0;
+  let savedRevision = 0;
+  let saving = null;
+  let saveError = null;
+  let saveMessage = "正在读取设置…";
+  let confirmedSettings = null;
+  let storageCopies = null;
+  let inspectGeneration = 0;
+  let cacheClearing = false;
   let openGenrePicker = null;
-  const syncStorage = globalThis.chrome?.storage?.sync;
   const localStorageApi = globalThis.chrome?.storage?.local;
 
   const elements = {
@@ -44,7 +57,20 @@
     genreExplainer: document.querySelector("#genreExplainer"),
     statusBadge: document.querySelector("#statusBadge"),
     saveState: document.querySelector("#saveState"),
-    resetButton: document.querySelector("#resetButton")
+    resetButton: document.querySelector("#resetButton"),
+    settingsFields: document.querySelector("#settingsFields"),
+    retrySaveButton: document.querySelector("#retrySaveButton"),
+    reloadSettingsButton: document.querySelector("#reloadSettingsButton"),
+    storageSummary: document.querySelector("#storageSummary"),
+    storageOptionsButton: document.querySelector("#storageOptionsButton"),
+    storageOptions: document.querySelector("#storageOptions"),
+    storageOptionsState: document.querySelector("#storageOptionsState"),
+    useLocalCopyButton: document.querySelector("#useLocalCopyButton"),
+    copyToLocalButton: document.querySelector("#copyToLocalButton"),
+    useSyncCopyButton: document.querySelector("#useSyncCopyButton"),
+    copyToSyncButton: document.querySelector("#copyToSyncButton"),
+    clearCacheButton: document.querySelector("#clearCacheButton"),
+    cacheState: document.querySelector("#cacheState")
   };
 
   function normalizeForComparison(value) {
@@ -77,7 +103,14 @@
     };
   }
 
+  const settingsStore = MissavSettingsStorage.create({ defaults: DEFAULT_SETTINGS, sanitize: sanitizeSettings });
+  const cloneSettings = (value) => JSON.parse(JSON.stringify(value));
+  const isDirty = () => saveRevision !== savedRevision;
+  const canEdit = () => readState === "ready" && storageMode !== "legacy" && !storageBusy;
+  const canChangeStorage = () => readState === "ready" && !saving && !storageBusy && (!isDirty() || Boolean(saveError));
+
   function addGenreRule(rule, mode) {
+    if (!canEdit()) return;
     settings.genreIncludeRules = settings.genreIncludeRules.filter((item) => item !== rule);
     settings.genreExcludeRules = settings.genreExcludeRules.filter((item) => item !== rule);
 
@@ -87,6 +120,7 @@
   }
 
   function removeGenreRule(rule, mode) {
+    if (!canEdit()) return;
     const key = mode === "include" ? "genreIncludeRules" : "genreExcludeRules";
     settings[key] = settings[key].filter((item) => item !== rule);
     persist();
@@ -235,6 +269,7 @@
 
     renderSiteStatus();
     renderGenrePickers();
+    renderPersistence();
   }
 
   function renderSiteStatus() {
@@ -256,7 +291,7 @@
     elements.actressExplainer.textContent = basicOnly
       ? "此站尚未适配女优数据，以下设置在支持的网站生效。"
       : "同一演员的不同名字合并计数。";
-    if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.blockedPresets.length +
+    if (basicOnly) elements.ruleSummary.textContent = `已配置 ${settings.blockedPresets.length +
       settings.genreIncludeRules.length + settings.genreExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
       (settings.actressLimitEnabled ? 1 : 0)} 条规则`;
   }
@@ -273,20 +308,173 @@
     });
   }
 
-  function persist() {
-    settings = sanitizeSettings(settings);
-    render();
-    const finishSave = () => {
-      elements.saveState.textContent = "已保存，页面将自动更新";
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        elements.saveState.textContent = "设置自动保存";
-      }, 1600);
-    };
-
-    if (syncStorage) syncStorage.set(settings, finishSave);
-    else finishSave();
+  function renderPersistence() {
+    const dirty = isDirty();
+    elements.settingsFields.disabled = !canEdit();
+    elements.resetButton.disabled = !canEdit();
+    elements.maxActresses.disabled = !canEdit() || !settings.actressLimitEnabled;
+    elements.saveState.textContent = saveMessage;
+    elements.saveState.classList.toggle("is-error", Boolean(saveError) || readState === "error");
+    elements.retrySaveButton.hidden = !saveError || !dirty || readState !== "ready";
+    elements.retrySaveButton.disabled = Boolean(saving) || storageBusy;
+    elements.reloadSettingsButton.hidden = readState !== "error" && !saveError;
+    elements.reloadSettingsButton.disabled = storageBusy || Boolean(saving);
+    elements.reloadSettingsButton.textContent = dirty ? "重新读取并放弃未保存更改" : "重新读取设置";
+    elements.storageOptionsButton.disabled = !canChangeStorage();
+    elements.storageSummary.textContent = readState === "loading" ? "正在读取存储位置…"
+      : readState === "error" ? "设置未能读取或存储位置未确认，请重试。"
+      : storageMode === "legacy" ? "发现旧版同步偏好，当前仍按旧偏好生效。请明确选择存储位置后再编辑；尚未复制或删除任何副本。"
+      : storageMode === "sync" ? "当前：已主动启用浏览器同步。"
+      : "当前：仅本机保存，不写入浏览器同步存储。";
+    for (const button of [elements.useLocalCopyButton, elements.copyToLocalButton,
+      elements.useSyncCopyButton, elements.copyToSyncButton]) {
+      button.disabled = !storageCopies || !canChangeStorage();
+    }
+    if (readState !== "ready") {
+      elements.statusBadge.textContent = readState === "error" ? "未读取" : "正在读取";
+      elements.ruleSummary.textContent = "尚未确认已保存的设置";
+    } else if (dirty) {
+      elements.statusBadge.textContent = saveError ? "未保存" : "保存中";
+      elements.ruleSummary.textContent = "以下为待保存设置；网页仍使用上次成功保存的设置";
+    }
   }
+
+  function loadSettings() {
+    const request = ++readGeneration;
+    readState = "loading";
+    saveError = null;
+    saveMessage = "正在读取设置…";
+    render();
+    settingsStore.read((error, snapshot) => {
+      if (request !== readGeneration) return;
+      if (error) {
+        readState = "error";
+        saveMessage = `读取失败，尚未更改设置：${error.message}`;
+      } else {
+        settings = sanitizeSettings(snapshot.settings);
+        confirmedSettings = cloneSettings(settings);
+        storageMode = snapshot.mode;
+        readState = "ready";
+        saveRevision = savedRevision = 0;
+        saveMessage = storageMode === "legacy" ? "请先选择偏好存储位置"
+          : `更改后自动保存到${storageMode === "sync" ? "同步存储" : "本机"}`;
+      }
+      render();
+      if (!error && storageMode === "legacy") showStorageOptions();
+    });
+  }
+
+  function drainSave() {
+    clearTimeout(saveTimer);
+    if (saving || !isDirty() || !canEdit() || saveError) return;
+    const operation = { revision: saveRevision, value: cloneSettings(settings) };
+    saving = operation;
+    settingsStore.save(operation.value, storageMode, (error, snapshot) => {
+      if (saving !== operation) return;
+      saving = null;
+      if (error) {
+        saveError = error;
+        if (error.modeChanged) readState = "error";
+        saveMessage = `未保存，网页仍使用上次成功保存的设置：${error.message}`;
+      } else {
+        confirmedSettings = cloneSettings(snapshot.settings);
+        savedRevision = operation.revision;
+        saveMessage = isDirty() ? "仍有更改待保存…" : "已保存，页面将自动更新";
+      }
+      render();
+      if (!error && isDirty()) drainSave();
+    });
+  }
+
+  function persist() {
+    if (!canEdit()) {
+      settings = sanitizeSettings(confirmedSettings ?? DEFAULT_SETTINGS);
+      render();
+      return;
+    }
+    settings = sanitizeSettings(settings);
+    saveRevision += 1;
+    saveError = null;
+    saveMessage = "正在保存；完成前请保持弹窗打开…";
+    clearTimeout(saveTimer);
+    render();
+    // Collapse a burst of toggles into one write; never overlap writes. A late
+    // callback cannot claim success for newer, still-unwritten edits.
+    saveTimer = setTimeout(drainSave, 150);
+  }
+
+  function showStorageOptions() {
+    if (!canChangeStorage()) return;
+    const request = ++inspectGeneration;
+    elements.storageOptions.hidden = false;
+    elements.storageOptionsButton.setAttribute("aria-expanded", "true");
+    elements.storageOptionsState.textContent = "正在检查已有副本…";
+    storageCopies = null;
+    renderPersistence();
+    settingsStore.inspect((error, copies) => {
+      if (request !== inspectGeneration) return;
+      storageCopies = error ? null : copies;
+      elements.storageOptionsState.textContent = error ? `无法检查副本：${error.message}`
+        : `本机副本：${copies.local ? "存在" : "无"}；同步副本：${copies.sync ? "存在" : "无"}。`;
+      elements.useLocalCopyButton.hidden = !copies?.local;
+      elements.useSyncCopyButton.hidden = !copies?.sync;
+      renderPersistence();
+    });
+  }
+
+  function selectStorage(mode, source) {
+    if (!storageCopies || !canChangeStorage()) return;
+    const destination = mode === "sync" ? "浏览器同步存储" : "本机存储";
+    const warning = source === "current"
+      ? `将当前全部筛选偏好保存到${destination}，并替换那里已有的设置副本。`
+      : `使用${destination}中现有的设置，替换当前界面使用的偏好。`;
+    const privacy = mode === "sync"
+      ? "标签、分类与人数阈值等偏好在浏览器同步开启时可传到同账号设备；后续编辑也会同步。"
+      : "此设备此后仅使用本机副本。旧同步副本不会删除，其他设备的设置不会改变。";
+    if (!globalThis.confirm(`${warning}\n${privacy}\n继续吗？`)) return;
+    storageBusy = true;
+    clearTimeout(saveTimer);
+    saveMessage = "正在切换存储位置，请保持弹窗打开…";
+    renderPersistence();
+    settingsStore.select(mode, source, cloneSettings(settings), (error, snapshot) => {
+      storageBusy = false;
+      if (error) {
+        // A failed mode switch can follow a successful sync upload. Do not
+        // retry the upload automatically or report an unqualified failure.
+        readState = "error";
+        saveMessage = `切换未完成：${error.message}`;
+      } else {
+        storageMode = snapshot.mode;
+        settings = sanitizeSettings(snapshot.settings);
+        confirmedSettings = cloneSettings(settings);
+        saveError = null;
+        savedRevision = saveRevision;
+        saveMessage = `已选择${storageMode === "sync" ? "同步" : "仅本机"}保存，页面将自动更新`;
+        elements.storageOptions.hidden = true;
+        elements.storageOptionsButton.setAttribute("aria-expanded", "false");
+      }
+      render();
+    });
+  }
+
+  elements.retrySaveButton.addEventListener("click", () => {
+    if (!canEdit() || saving) return;
+    saveError = null;
+    saveMessage = "正在重试保存…";
+    render();
+    drainSave();
+  });
+  elements.reloadSettingsButton.addEventListener("click", () => {
+    if (storageBusy || saving) return;
+    if (isDirty() && !globalThis.confirm("放弃当前未保存的更改，重新读取已保存的设置？")) return;
+    clearTimeout(saveTimer);
+    loadSettings();
+  });
+  elements.storageOptionsButton.addEventListener("click", showStorageOptions);
+  elements.useLocalCopyButton.addEventListener("click", () => selectStorage("local", "existing"));
+  elements.copyToLocalButton.addEventListener("click", () => selectStorage("local", "current"));
+  elements.useSyncCopyButton.addEventListener("click", () => selectStorage("sync", "existing"));
+  elements.copyToSyncButton.addEventListener("click", () => selectStorage("sync", "current"));
 
   elements.enabled.addEventListener("change", () => {
     settings.enabled = elements.enabled.checked;
@@ -381,29 +569,63 @@
     persist();
   });
 
-  if (syncStorage) {
-    syncStorage.get(DEFAULT_SETTINGS, (storedSettings) => {
-      settings = sanitizeSettings(storedSettings);
-      render();
-    });
-  } else {
-    render();
-  }
+  loadSettings();
 
   readSiteStatus();
 
-  if (localStorageApi) {
-    localStorageApi.get({ discoveredTypes: [], metadataCacheCount: 0 }, (stored) => {
+  if (localStorageApi?.get) {
+    const request = metadataReadGeneration;
+    try {
+      localStorageApi.get({ discoveredTypes: [], metadataCacheCount: 0 }, (stored) => {
+      const error = globalThis.chrome?.runtime?.lastError;
+      if (error || request !== metadataReadGeneration || !stored) return;
       discoveredTypes = Array.isArray(stored.discoveredTypes) ? stored.discoveredTypes : [];
       metadataCacheCount = Number.isFinite(Number(stored.metadataCacheCount))
         ? Number(stored.metadataCacheCount)
         : 0;
       renderGenrePickers();
-    });
+      });
+    } catch {
+      elements.cacheState.textContent = "缓存统计暂时无法读取";
+    }
   }
+
+  elements.clearCacheButton.addEventListener("click", () => {
+    if (cacheClearing) return;
+    cacheClearing = true;
+    elements.clearCacheButton.disabled = true;
+    elements.cacheState.classList.remove("is-error");
+    elements.cacheState.textContent = "正在清除缓存…";
+    let finished = false;
+    const finish = (error) => {
+      if (finished) return;
+      finished = true;
+      cacheClearing = false;
+      elements.clearCacheButton.disabled = false;
+      elements.cacheState.classList.toggle("is-error", Boolean(error));
+      elements.cacheState.textContent = error ? `清除失败：${error.message}`
+        : "缓存、已发现分类与计数已清除；后续查询会重新缓存";
+      if (!error) {
+        metadataReadGeneration += 1;
+        discoveredTypes = [];
+        metadataCacheCount = 0;
+        renderGenrePickers();
+      }
+    };
+    try {
+      const runtime = globalThis.chrome?.runtime;
+      if (!runtime?.sendMessage) throw new Error("后台通信不可用，请重新打开扩展后重试");
+      runtime.sendMessage({ type: "missav-clear-metadata-cache" }, (response) => {
+        const error = runtime.lastError;
+        finish(error ? new Error(error.message || "后台通信失败")
+          : response?.ok === true ? null : new Error(response?.error || "后台未确认清除成功"));
+      });
+    } catch (error) { finish(error); }
+  });
 
   globalThis.chrome?.storage?.onChanged?.addListener((changes, areaName) => {
     if (areaName !== "local") return;
+    if (changes.discoveredTypes || changes.metadataCacheCount) metadataReadGeneration += 1;
     if (changes.discoveredTypes) {
       discoveredTypes = Array.isArray(changes.discoveredTypes.newValue)
         ? changes.discoveredTypes.newValue

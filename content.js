@@ -36,7 +36,14 @@
   const HOME_REFILL_ACK_TIMEOUT_MS = 500;
   const HOME_REFILL_RESPONSE_TIMEOUT_MS = 15000;
   const HOME_GRID_REVEAL_QUIET_MS = 1800;
+  const PAGE_REQUEST_TIMEOUT_MS = 15000;
   const pageHtmlCache = new Map();
+  const pageBaseUrls = new WeakMap();
+  const pageRequests = new Set();
+  let currentPageUrl = location.href;
+  const OWN_CLASSES = new Set([HIDDEN_CLASS, LABEL_HIDDEN_CLASS, GENRE_HIDDEN_CLASS,
+    ACTRESS_NAMES_CLASS, ACTRESS_HOST_CLASS, PENDING_CLASS, UNVERIFIED_CLASS,
+    SETTLING_GRID_CLASS, BUSY_CONTROL_CLASS]);
   const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
   metadataClient.subscribe(() => scheduleScan());
   const metadataNotices = new Map();
@@ -451,12 +458,14 @@
   }
 
   function getNextPageUrl(root, baseUrl) {
+    baseUrl = pageBaseUrls.get(root) ?? baseUrl;
     const href = root.querySelector('a[rel="next"][href]')?.getAttribute("href");
     if (!href) return null;
 
     try {
       const target = new URL(href, baseUrl);
-      return target.origin === new URL(baseUrl).origin ? target.href : null;
+      return ["https:", "http:"].includes(target.protocol) && target.origin === new URL(baseUrl).origin
+        ? target.href : null;
     } catch {
       return null;
     }
@@ -468,10 +477,11 @@
 
     try {
       const url = new URL(href, baseUrl);
+      if (!["http:", "https:"].includes(url.protocol) || url.origin !== new URL(baseUrl).origin) return null;
       url.hash = "";
       return url.href;
     } catch {
-      return href;
+      return null;
     }
   }
 
@@ -934,8 +944,61 @@
     }
   }
 
+  function resolveImportedUrl(value, baseUrl, sameOrigin = false) {
+    try {
+      const url = new URL(value, baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) return null;
+      if (sameOrigin && url.origin !== new URL(baseUrl).origin) return null;
+      return url.href;
+    } catch { return null; }
+  }
+
+  function resolveSourceSet(value, baseUrl) {
+    const candidates = [];
+    // Follow the srcset token boundary: URL commas are allowed; trailing commas
+    // delimit a descriptor-less candidate. Unsafe schemes are discarded whole.
+    let rest = String(value);
+    while (rest) {
+      rest = rest.replace(/^[\s,]+/, "");
+      if (!rest) break;
+      const token = /^\S+/.exec(rest)[0];
+      rest = rest.slice(token.length);
+      let url = token;
+      let descriptor = "";
+      if (/,$/.test(url)) url = url.replace(/,+$/, "");
+      else {
+        const separator = rest.indexOf(",");
+        descriptor = (separator < 0 ? rest : rest.slice(0, separator)).trim();
+        rest = separator < 0 ? "" : rest.slice(separator + 1);
+      }
+      const resolved = resolveImportedUrl(url, baseUrl);
+      const validDescriptor = !descriptor || /^[1-9]\d*w$/.test(descriptor) ||
+        (/^(?:\d+(?:\.\d+)?|\.\d+)x$/.test(descriptor) && Number.parseFloat(descriptor) > 0);
+      if (resolved && validDescriptor) candidates.push(resolved + (descriptor ? ` ${descriptor}` : ""));
+    }
+    return candidates.join(", ");
+  }
+
+  function normalizeImportedUrls(root, baseUrl) {
+    for (const node of [root, ...root.querySelectorAll("*")]) {
+      for (const attribute of ["href", "src", "data-src", "poster"]) {
+        if (!node.hasAttribute(attribute)) continue;
+        const value = resolveImportedUrl(node.getAttribute(attribute), baseUrl, attribute === "href");
+        if (value) node.setAttribute(attribute, value);
+        else node.removeAttribute(attribute);
+      }
+      for (const attribute of ["srcset", "data-srcset"]) {
+        if (!node.hasAttribute(attribute)) continue;
+        const value = resolveSourceSet(node.getAttribute(attribute), baseUrl);
+        if (value) node.setAttribute(attribute, value);
+        else node.removeAttribute(attribute);
+      }
+    }
+  }
+
   function appendImportedItem(grid, item, baseUrl) {
     const importedItem = document.importNode(item, true);
+    normalizeImportedUrls(importedItem, baseUrl);
     importedItem.setAttribute(REFILL_ATTRIBUTE, "true");
     activateImportedImages(importedItem);
     const importedCard = getCardFromGridItem(importedItem);
@@ -946,23 +1009,53 @@
     applyCardMetadata(importedCard, getCardItemId(importedCard, baseUrl));
   }
 
+  function cancelPageRequests() {
+    for (const controller of pageRequests) controller.abort();
+    pageRequests.clear();
+  }
+
   async function fetchPageDocument(url) {
-    let html = pageHtmlCache.get(url);
-
-    if (!html) {
-      try {
-        const response = await fetch(url, { credentials: "same-origin" });
-        if (!response.ok) return null;
-        html = await response.text();
-      } catch {
-        return null;
-      }
+    const revision = filterRevision;
+    const pageUrl = location.href;
+    const current = () => revision === filterRevision && pageUrl === location.href && isFilteringActive();
+    const controller = new AbortController();
+    pageRequests.add(controller);
+    let timer;
+    try {
+      const aborted = new Promise((_, reject) => {
+        controller.signal.addEventListener("abort", () => reject(new Error("Page request cancelled")), { once: true });
+        timer = setTimeout(() => controller.abort(), PAGE_REQUEST_TIMEOUT_MS);
+      });
+      const load = async () => {
+        let cached = pageHtmlCache.get(url);
+        if (!cached) {
+          const response = await fetch(url, { credentials: "same-origin", signal: controller.signal });
+          if (!response.ok || !current() || controller.signal.aborted) return null;
+          const sourceUrl = resolveImportedUrl(response.url || url, url, true);
+          if (!sourceUrl) return null;
+          const html = await response.text();
+          cached = { html, sourceUrl };
+        }
+        if (!current() || controller.signal.aborted) return null;
+        const parsed = new DOMParser().parseFromString(cached.html, "text/html");
+        if (!MissavSiteLibrary.inspect(parsed, cached.sourceUrl).compatible || !findPaginatedGrid(parsed)) return null;
+        const baseHref = parsed.querySelector("base[href]")?.getAttribute("href");
+        const baseUrl = baseHref ? resolveImportedUrl(baseHref, cached.sourceUrl, true) ?? cached.sourceUrl : cached.sourceUrl;
+        pageBaseUrls.set(parsed, baseUrl);
+        // Normalize before filtering and deduplication as well as before insertion.
+        for (const { item } of getGridItems(findPaginatedGrid(parsed))) normalizeImportedUrls(item, baseUrl);
+        if (!current() || controller.signal.aborted) return null;
+        pageHtmlCache.set(url, cached);
+        return parsed;
+      };
+      // Racing the complete operation also settles hostile/non-cancellable body
+      // mocks, while AbortController cancels real network and body consumption.
+      return await Promise.race([load(), aborted]);
+    } catch { return null; }
+    finally {
+      clearTimeout(timer);
+      pageRequests.delete(controller);
     }
-
-    const parsed = new DOMParser().parseFromString(html, "text/html");
-    if (!MissavSiteLibrary.inspect(parsed, url).compatible || !findPaginatedGrid(parsed)) return null;
-    pageHtmlCache.set(url, html);
-    return parsed;
   }
 
   async function refillPaginatedGrid(revision) {
@@ -1004,7 +1097,7 @@
 
       visitedPages.add(nextPageUrl);
       const pageDocument = await fetchPageDocument(nextPageUrl);
-      if (revision !== filterRevision) return;
+      if (revision !== filterRevision || location.href !== basePageUrl) return;
       if (!pageDocument) { paginationNeedsRetry = true; return; }
 
       const sourceGrid = findPaginatedGrid(pageDocument);
@@ -1015,7 +1108,7 @@
         nextPageUrl,
         revision,
         ({ item, card }) => {
-          if (visibleCount >= targetSize) return;
+          if (revision !== filterRevision || location.href !== basePageUrl || visibleCount >= targetSize) return;
           const cardKey = getCardKey(card, nextPageUrl);
           if (cardKey && seenCardKeys.has(cardKey)) return;
           appendImportedItem(grid, item, nextPageUrl);
@@ -1078,6 +1171,7 @@
 
     infiniteLoading = true;
     const loadToken = {};
+    const basePageUrl = location.href;
     infiniteLoadToken = loadToken;
     setInfiniteStatus("正在筛选下一页…", "loading");
     let appendedCount = 0;
@@ -1089,11 +1183,11 @@
         appendedCount === 0 &&
         checkedPages < MAX_REFILL_PAGES
       ) {
-        if (revision !== filterRevision || !settings.infiniteScroll) return;
+        if (revision !== filterRevision || location.href !== basePageUrl || !settings.infiniteScroll) return;
 
         const pageUrl = infiniteNextPageUrl;
         const pageDocument = await fetchPageDocument(pageUrl);
-        if (revision !== filterRevision || infiniteLoadToken !== loadToken) return;
+        if (revision !== filterRevision || location.href !== basePageUrl || infiniteLoadToken !== loadToken) return;
         if (!pageDocument) {
           setInfiniteStatus("加载失败，点击这里重试", "error");
           infiniteNeedsRetry = true;
@@ -1114,6 +1208,7 @@
           pageUrl,
           revision,
           ({ item, card }) => {
+            if (revision !== filterRevision || location.href !== basePageUrl || infiniteLoadToken !== loadToken) return;
             const cardKey = getCardKey(card, pageUrl);
             if (cardKey && infiniteSeenCardKeys.has(cardKey)) return;
             appendImportedItem(infiniteGrid, item, pageUrl);
@@ -1203,6 +1298,7 @@
   }
 
   function restoreUnfilteredPage() {
+    cancelPageRequests();
     teardownInfiniteScroll();
     removeRefillItems();
     for (const grid of document.querySelectorAll("div.grid")) {
@@ -1216,7 +1312,22 @@
     updateMetadataNotices();
   }
 
+  function resetForNavigation() {
+    if (currentPageUrl === location.href) return;
+    currentPageUrl = location.href;
+    cancelPageRequests();
+    filterRevision += 1;
+    paginationTask = null;
+    paginationRunKey = null;
+    paginationNeedsRetry = false;
+    stalledPageIds.clear();
+    pageHtmlCache.clear();
+    teardownInfiniteScroll();
+    removeRefillItems();
+  }
+
   function runWorkLoop() {
+    resetForNavigation();
     if (refillInProgress) return;
 
     refillInProgress = true;
@@ -1294,25 +1405,20 @@
     if (belongsToNames(mutation?.target)) return false;
     const changedNodes = [...(mutation?.addedNodes ?? []), ...(mutation?.removedNodes ?? [])];
     if (mutation?.type === "childList" && changedNodes.length && changedNodes.every(belongsToNames)) return false;
-    if (isInsideRefillItem(mutation?.target)) {
-      return false;
+    if (mutation?.type === "attributes") {
+      if (!["style", "href", "class", "hidden", "x-show"].includes(mutation.attributeName)) return false;
+      const target = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement;
+      if (!target) return false;
+      if (mutation.attributeName === "class") {
+        const siteClasses = (value) => String(value ?? "").split(/\s+/).filter((name) => name && !OWN_CLASSES.has(name)).sort().join(" ");
+        if (siteClasses(mutation.oldValue) === siteClasses(target.getAttribute("class"))) return false;
+      }
+      if (mutation.attributeName === "href") return Boolean(target.closest?.("div.thumbnail"));
+      return Boolean(target.closest?.("div.thumbnail")) || mutationTargetBelongsToVideoItem(target) ||
+        Boolean(target.querySelector?.("div.thumbnail"));
     }
 
-    if (mutation?.type === "attributes") {
-      if (mutation.attributeName !== "style") return false;
-      const target = mutation.target?.nodeType === 1
-        ? mutation.target
-        : mutation.target?.parentElement;
-      if (!target) return false;
-      const possibleBadges = [
-        ...(target.matches?.("span") ? [target] : []),
-        ...(target.querySelectorAll?.("span") ?? [])
-      ];
-      return possibleBadges.some(isBadge) && (
-        Boolean(target.closest?.("div.thumbnail")) ||
-        mutationTargetBelongsToVideoItem(target)
-      );
-    }
+    if (isInsideRefillItem(mutation?.target)) return false;
 
     if (mutation?.type !== "childList") return false;
 
@@ -1353,6 +1459,7 @@
         if (card) cards.add(card);
       }
 
+      if (mutation.type === "attributes" && !closestCard) addCardsFromNode(target);
       for (const node of mutation.addedNodes ?? []) addCardsFromNode(node);
     }
 
@@ -1377,6 +1484,7 @@
       location.href
     );
     const observer = new MutationObserver((mutations) => {
+      resetForNavigation();
       if (!isFilteringActive()) return;
       // Invalidate before inspecting additions: one-card and multi-card grids
       // have different layout boundaries. Style-only updates keep the topology.
@@ -1387,6 +1495,7 @@
 
       const changedCards = collectMutationCards(affectedMutations);
       if (changedCards.length > 0) {
+        for (const card of changedCards) cardSettledRevisions.delete(card);
         noteHomeGridActivity(changedCards);
         prepareEntriesForFiltering(
           changedCards.map((card) => ({ item: findLayoutItem(card), card })),
@@ -1400,13 +1509,23 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["style"]
+      attributeOldValue: true,
+      attributeFilter: ["style", "href", "class", "hidden", "x-show"]
     });
 
     const scanAfterLoad = () => {
       scheduleScan();
       setTimeout(scheduleScan, 750);
     };
+    window.addEventListener("pagehide", cancelPageRequests);
+    window.navigation?.addEventListener("currententrychange", () => {
+      resetForNavigation();
+      scheduleScan();
+    });
+    for (const event of ["popstate", "hashchange"]) window.addEventListener(event, () => {
+      resetForNavigation();
+      scheduleScan();
+    });
     window.addEventListener("online", () => {
       retryMetadata();
     });
@@ -1418,35 +1537,29 @@
 
   function startFiltering(capabilities) {
     site = capabilities;
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (storedSettings) => {
-      settings = sanitizeSettings(storedSettings);
-
-      if (document.documentElement) {
-        startObserver();
-      } else {
-        document.addEventListener("DOMContentLoaded", startObserver, { once: true });
-      }
-    });
-
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "sync") {
+    let loaded = false;
+    const settingsStore = MissavSettingsStorage.create({ defaults: DEFAULT_SETTINGS, sanitize: sanitizeSettings });
+    // A failed initial read must not activate defaults against unknown saved
+    // preferences. Later read failures keep the last confirmed snapshot active.
+    settings = { ...DEFAULT_SETTINGS, enabled: false };
+    settingsStore.subscribe((error, snapshot) => {
+      if (error) return;
+      const nextSettings = sanitizeSettings(snapshot.settings);
+      const changedKeys = Object.keys(DEFAULT_SETTINGS)
+        .filter((key) => JSON.stringify(settings[key]) !== JSON.stringify(nextSettings[key]));
+      settings = nextSettings;
+      if (!loaded) {
+        loaded = true;
+        if (document.documentElement) startObserver();
+        else document.addEventListener("DOMContentLoaded", startObserver, { once: true });
         return;
       }
-
-      const nextSettings = { ...settings };
-      for (const key of Object.keys(DEFAULT_SETTINGS)) {
-        if (changes[key]) {
-          nextSettings[key] = changes[key].newValue;
-        }
-      }
-
-      settings = sanitizeSettings(nextSettings);
-      const changedKeys = Object.keys(DEFAULT_SETTINGS).filter((key) => changes[key]);
       if (changedKeys.length === 0) return;
       if (changedKeys.every((key) => key === "showActressNames")) {
         scheduleScan();
         return;
       }
+      cancelPageRequests();
       metadataClient.invalidateUnresolved();
       paginationRunKey = null;
       paginationNeedsRetry = false;

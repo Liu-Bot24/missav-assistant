@@ -10,16 +10,20 @@ const root = path.join(__dirname, '..');
   const check = (name, fn) => { try { fn(); console.log(`PASS ${name}`); } catch (e) { failures.push(`${name}: ${e.message}`); } };
   try {
     const page = await browser.newPage({ viewport: { width: 380, height: 600 } });
+    await page.route(/^https?:/, route => route.abort());
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       window.saved = { genreExcludeRules: ['value:' + encodeURIComponent('ハイビジョン')] };
-      window.chrome = { storage: { sync: {
-        get(defaults, cb) { cb({ ...defaults, ...window.saved }); },
-        set(settings, cb) { window.saved = structuredClone(settings); cb(); }
-      } } };
+      window.chrome = { storage: {
+        local: {
+          get(keys, cb) { cb(Array.isArray(keys) ? { missavSettingsStorageMode: 'local', missavLocalSettings: window.saved } : { ...keys }); },
+          set(value, cb) { if (value.missavLocalSettings) window.saved = structuredClone(value.missavLocalSettings); cb(); }
+        }, sync: { get(_keys, cb) { cb({}); }, set() { throw new Error('Unexpected sync write'); } }
+      } };
     });
     await page.goto(pathToFileURL(path.join(root, 'popup.html')).href);
+    await page.waitForFunction(() => !document.querySelector("#settingsFields").disabled);
     assert.match(await page.locator('#genreExcludeField .selected-genre-chip').textContent(), /高清/);
     await page.locator('#genreIncludeSearch').click();
     const list = page.locator('#genreIncludeSuggestions');
@@ -65,6 +69,7 @@ const root = path.join(__dirname, '..');
       await menu.locator('[role=option]').last().click();
       assert.ok((await page.locator(`#genre${mode}Field .selected-genre-chip`).allTextContents()).some(text => text.includes(lastLabel)));
       assert.equal(await menu.isHidden(), true);
+      await page.waitForFunction(() => document.querySelector("#saveState").textContent.includes("已保存"));
       assert.ok(await page.evaluate(mode => window.saved[`genre${mode}Rules`].length > 0, mode));
       console.log(`PASS wheel scroll reaches and selects last ${mode.toLowerCase()} category`);
     }

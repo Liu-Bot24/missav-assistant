@@ -7,6 +7,7 @@ const API_HOST = "https://client-rapi-missav.recombee.com";
 const PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV";
 const MAX_BATCH_SIZE = 30;
 const MAX_METADATA_CACHE_ITEMS = 5000;
+const METADATA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const METADATA_CACHE_KEY = "videoMetadataById";
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
@@ -123,9 +124,16 @@ async function fetchMetadata(itemIds) {
 }
 
 let metadataCacheWrite = Promise.resolve();
+let metadataCacheGeneration = 0;
 let metadataCache = null;
 let metadataCacheLoad = null;
 const metadataInFlight = new Map();
+
+function isFreshMetadata(record, now = Date.now()) {
+  const timestamp = record?.cachedAt;
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= now &&
+    now - timestamp < METADATA_CACHE_TTL_MS && isCompleteMetadata(sanitizeMetadata(record));
+}
 
 function cacheObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -149,17 +157,23 @@ function loadMetadataCache() {
 chrome.storage.onChanged?.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes[METADATA_CACHE_KEY]) return;
   metadataCache = cacheObject(changes[METADATA_CACHE_KEY].newValue);
+  if (Object.keys(metadataCache).length === 0) {
+    metadataCacheGeneration += 1;
+    metadataInFlight.clear();
+  }
   metadataCacheLoad = null;
 });
 
-function saveMetadataCache(metadataById) {
+function saveMetadataCache(metadataById, generation = metadataCacheGeneration) {
   const additions = Object.entries(metadataById)
     .map(([id, metadata]) => [id, sanitizeMetadata(metadata)])
     .filter(([, metadata]) => isCompleteMetadata(metadata));
   if (additions.length === 0) return Promise.resolve();
 
   metadataCacheWrite = metadataCacheWrite.catch(() => {}).then(async () => {
+    if (generation !== metadataCacheGeneration) return;
     const current = await loadMetadataCache();
+    if (generation !== metadataCacheGeneration) return;
     const cache = { ...current };
     const cachedAt = Date.now();
 
@@ -168,7 +182,7 @@ function saveMetadataCache(metadataById) {
     }
 
     const retained = Object.entries(cache)
-      .filter(([, record]) => isCompleteMetadata(sanitizeMetadata(record)))
+      .filter(([, record]) => isFreshMetadata(record, cachedAt))
       .sort((left, right) => Number(right[1].cachedAt ?? 0) - Number(left[1].cachedAt ?? 0))
       .slice(0, MAX_METADATA_CACHE_ITEMS);
     const prunedCache = Object.fromEntries(retained);
@@ -188,13 +202,15 @@ async function queryMetadata(itemIds) {
   const ids = normalizeItemIds(itemIds);
   if (ids.length === 0) return {};
 
+  const generation = metadataCacheGeneration;
   const cache = await loadMetadataCache();
+  if (generation !== metadataCacheGeneration) return {};
   const metadataById = {};
   const missingIds = [];
 
   for (const id of ids) {
     const cached = sanitizeMetadata(cache?.[id]);
-    if (isCompleteMetadata(cached)) metadataById[id] = cached;
+    if (isFreshMetadata(cache?.[id])) metadataById[id] = cached;
     else missingIds.push(id);
   }
 
@@ -202,26 +218,27 @@ async function queryMetadata(itemIds) {
     const newIds = missingIds.filter((id) => !metadataInFlight.has(id));
     if (newIds.length > 0) {
       const pending = fetchMetadata(newIds).then(async (fetched) => {
-        await saveMetadataCache(fetched).catch(() => {});
-        return fetched;
+        if (generation !== metadataCacheGeneration) return {};
+        await saveMetadataCache(fetched, generation).catch(() => {});
+        return generation === metadataCacheGeneration ? fetched : {};
       }).finally(() => {
-        for (const id of newIds) metadataInFlight.delete(id);
+        for (const id of newIds) if (metadataInFlight.get(id) === pending) metadataInFlight.delete(id);
       });
       for (const id of newIds) metadataInFlight.set(id, pending);
     }
     const fetchedPairs = await Promise.all(missingIds.map(async (id) => {
       const fetched = await metadataInFlight.get(id);
-      return Object.hasOwn(fetched, id) ? [id, fetched[id]] : null;
+      return fetched && Object.hasOwn(fetched, id) ? [id, fetched[id]] : null;
     }));
     Object.assign(metadataById, Object.fromEntries(fetchedPairs.filter(Boolean)));
   }
 
-  return metadataById;
+  return generation === metadataCacheGeneration ? metadataById : {};
 }
 
 let discoveryWrite = Promise.resolve();
 
-function saveDiscoveredTypes(metadataById) {
+function saveDiscoveredTypes(metadataById, generation = metadataCacheGeneration) {
   const additions = Object.values(metadataById)
     .filter(Boolean)
     .flatMap((metadata) => [
@@ -234,7 +251,9 @@ function saveDiscoveredTypes(metadataById) {
   if (additions.length === 0) return;
 
   discoveryWrite = discoveryWrite.then(async () => {
+    if (generation !== metadataCacheGeneration) return;
     const stored = await chrome.storage.local.get({ discoveredTypes: [] });
+    if (generation !== metadataCacheGeneration) return;
     const byKey = new Map(
       [...stored.discoveredTypes, ...additions]
         .map((value) => [MissavGenreLibrary.normalize(value), String(value).trim()])
@@ -253,7 +272,28 @@ function saveDiscoveredTypes(metadataById) {
   }).catch(() => {});
 }
 
+async function clearMetadataCache() {
+  // Invalidate requests before waiting for the ordered writes. Responses already
+  // in flight must not repopulate either the cache or discovered-category list.
+  metadataCacheGeneration += 1;
+  metadataInFlight.clear();
+  metadataCache = {};
+  metadataCacheLoad = null;
+  await Promise.all([metadataCacheWrite.catch(() => {}), discoveryWrite.catch(() => {})]);
+  await chrome.storage.local.set({
+    [METADATA_CACHE_KEY]: {}, metadataCacheCount: 0, discoveredTypes: []
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "missav-clear-metadata-cache") {
+    // The clear action is only available to our own extension popup, never a page.
+    if (!chrome.runtime.id || sender.id !== chrome.runtime.id || sender.tab ||
+        sender.url !== chrome.runtime.getURL("popup.html")) return false;
+    void clearMetadataCache().then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false, error: "缓存清除失败，请重试" }));
+    return true;
+  }
   if (message?.type !== "missav-query-metadata") return false;
 
   const senderUrl = sender.tab?.url ?? sender.url ?? "";
@@ -264,9 +304,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  const generation = metadataCacheGeneration;
   void queryMetadata(message.itemIds)
     .then((items) => {
-      saveDiscoveredTypes(items);
+      saveDiscoveredTypes(items, generation);
       sendResponse({ ok: true, items });
     })
     .catch(() => sendResponse({ ok: false, items: {} }));

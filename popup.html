@@ -13,10 +13,11 @@
         <p class="eyebrow">VIEWING ASSISTANT</p>
         <h1>观看小助手</h1>
       </div>
-      <span id="statusBadge" class="status-badge">已开启</span>
+      <span id="statusBadge" class="status-badge">正在读取</span>
     </header>
 
     <main>
+      <fieldset id="settingsFields" class="settings-fields" disabled>
       <section class="master-control" aria-labelledby="masterTitle">
         <div>
           <h2 id="masterTitle">内容过滤</h2>
@@ -155,15 +156,43 @@
           <span class="switch-track" aria-hidden="true"></span>
         </span>
       </label>
+      </fieldset>
+
+      <section class="panel storage-panel" aria-labelledby="storageTitle">
+        <h2 id="storageTitle">偏好存储与隐私</h2>
+        <p id="storageSummary" role="status">正在读取存储位置…</p>
+        <p>新设置默认仅保存在本机。主动启用同步后，标签、分类、人数阈值等全部筛选偏好会交给浏览器同步；浏览器同步开启时可传到同账号设备。</p>
+        <button id="storageOptionsButton" type="button" aria-expanded="false">更改存储位置</button>
+        <div id="storageOptions" hidden>
+          <p id="storageOptionsState" role="status"></p>
+          <p>选择已有副本会采用该副本的设置。保存当前设置会替换目标副本，操作前会再次确认。切换到本机不删除旧同步副本，也不影响其他设备的选择。</p>
+          <div class="storage-actions">
+            <button id="useLocalCopyButton" type="button" hidden>使用现有本机副本</button>
+            <button id="copyToLocalButton" type="button">将当前设置保存到本机</button>
+            <button id="useSyncCopyButton" type="button" hidden>使用现有同步副本并启用同步</button>
+            <button id="copyToSyncButton" type="button">将当前设置上传并启用同步</button>
+          </div>
+        </div>
+        <button id="reloadSettingsButton" type="button" hidden>重新读取设置</button>
+      </section>
+
+      <section class="panel storage-panel" aria-labelledby="cacheTitle">
+        <h2 id="cacheTitle">元数据缓存</h2>
+        <p>缓存仅保存在本机，有效期为 7 天。过期记录离线时也不再使用，再次查询后才更新；未查询的过期记录可能保留至清除或容量淘汰。清除会同时移除已发现分类与缓存计数，不改变筛选偏好。</p>
+        <button id="clearCacheButton" type="button">清除元数据缓存</button>
+        <p id="cacheState" role="status" aria-live="polite"></p>
+      </section>
     </main>
 
     <footer>
       <span id="saveState" aria-live="polite">设置自动保存</span>
+      <button id="retrySaveButton" type="button" hidden>重试保存</button>
       <button id="resetButton" type="button">恢复默认</button>
     </footer>
 
     <script src="label-library.js"></script>
     <script src="genre-library.js"></script>
+    <script src="settings-storage.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

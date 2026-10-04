@@ -23,6 +23,7 @@ function createCacheHarness(initialCache = {}, options = {}) {
       metrics.fetches += 1;
       if (metrics.fetches <= failures) throw new Error("fixture network failure");
       await new Promise(setImmediate);
+      if (options.deferFetch) await options.deferFetch();
       return { ok: true, json: async () => JSON.parse(requestOptions.body).requests.map((request) => ({
         code: 200, json: { recomms: [{ id: request.params.searchQuery,
           values: { genres: ["sample"], tags: [], type: "sample", duration: 15000,
@@ -30,7 +31,7 @@ function createCacheHarness(initialCache = {}, options = {}) {
       })) };
     },
     chrome: {
-      runtime: { onMessage: { addListener(fn) { listener = fn; } } },
+      runtime: { id: "fixture-extension", getURL: name => `chrome-extension://fixture-extension/${name}`, onMessage: { addListener(fn) { listener = fn; } } },
       storage: {
         onChanged: { addListener(fn) { storageListener = fn; } },
         local: {
@@ -39,6 +40,7 @@ function createCacheHarness(initialCache = {}, options = {}) {
             return structuredClone({ ...defaults, ...state });
           },
           async set(value) {
+            if (options.failWrites) throw new Error("fixture storage failure");
             if (value.videoMetadataById) metrics.cacheWrites += 1;
             Object.assign(state, structuredClone(value));
             storageListener?.(Object.fromEntries(Object.entries(value).map(([key, newValue]) =>
@@ -53,6 +55,8 @@ function createCacheHarness(initialCache = {}, options = {}) {
   vm.runInContext(backgroundSource, context);
   return {
     metrics, state,
+    clearFromPopup() { return new Promise(resolve => listener({ type: "missav-clear-metadata-cache" },
+      { id: "fixture-extension", url: "chrome-extension://fixture-extension/popup.html" }, resolve)); },
     message(value, sender, respond) { return listener(value, sender, respond); },
     query(ids) { return new Promise((resolve) => listener(
       { type: "missav-query-metadata", itemIds: ids },
@@ -82,7 +86,7 @@ test("性能：多个页面同时查询重叠番号只发出一次在途查询",
 });
 
 test("性能：热缓存不重复读取整份五千条映射，清空后会重新查询", async () => {
-  const metadata = { genres: ["sample"], tags: [], type: "sample", duration: 15000, actresses: ["松本いちか"] };
+  const metadata = { genres: ["sample"], tags: [], type: "sample", duration: 15000, actresses: ["松本いちか"], cachedAt: Date.now() };
   const cache = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`sample-${i}`, metadata]));
   const harness = createCacheHarness(cache);
   for (let i = 0; i < 12; i += 1) {
@@ -277,4 +281,64 @@ test("未适配域名不能调用原站分类库，包括名称相似的域名",
     assert.equal(accepted, false, url);
   }
   assert.equal(harness.metrics.fetches, 0);
+});
+
+
+test("MA-06 expired complete cache refreshes and never silently falls back while offline", async () => {
+  const old = { genres: [], tags: [], type: "sample", duration: 1, actresses: [], cachedAt: 0 };
+  const fresh = createCacheHarness({ "sample-001": old });
+  assert.equal((await fresh.query(["sample-001"])).items["sample-001"].duration, 15000);
+  assert.equal(fresh.metrics.fetches, 1);
+  const offline = createCacheHarness({ "sample-001": old }, { fetchFailures: 1 });
+  assert.equal((await offline.query(["sample-001"])).ok, false);
+});
+
+
+test("MA-06 fresh timestamps hit while missing, future, and seven-day-old timestamps refresh", async () => {
+  const metadata = { genres: [], tags: [], type: "sample", duration: 1, actresses: [] };
+  for (const [timestamp, fetches] of [[Date.now(), 0], [undefined, 1], [Date.now() + 86400000, 1], [Date.now() - 7 * 86400000, 1]]) {
+    const harness = createCacheHarness({ "sample-001": { ...metadata, cachedAt: timestamp } });
+    await harness.query(["sample-001"]);
+    assert.equal(harness.metrics.fetches, fetches, String(timestamp));
+  }
+});
+
+test("MA-06 clearing caches prevents late requests from restoring cached records or discoveries", async () => {
+  let release;
+  const harness = createCacheHarness({}, { deferFetch: () => new Promise(resolve => { release = resolve; }) });
+  const pending = harness.query(["sample-001"]);
+  while (!release) await new Promise(setImmediate);
+  assert.equal((await harness.clearFromPopup()).ok, true);
+  release();
+  assert.deepEqual(Object.keys((await pending).items), []);
+  await new Promise(setImmediate);
+  assert.deepEqual(harness.state.videoMetadataById, {});
+  assert.deepEqual(harness.state.discoveredTypes, []);
+  assert.equal(harness.state.metadataCacheCount, 0);
+});
+
+test("MA-06 external clear invalidates in-flight work; page senders cannot clear caches", async () => {
+  let release;
+  const harness = createCacheHarness({}, { deferFetch: () => new Promise(resolve => { release = resolve; }) });
+  const pending = harness.query(["sample-001"]);
+  while (!release) await new Promise(setImmediate);
+  harness.clear(); release();
+  await pending;
+  assert.deepEqual(harness.state.videoMetadataById, {});
+  for (const sender of [{ tab: { url: "https://missav.ai/new" } }, { id: "fixture-extension", url: "chrome-extension://fixture-extension/popup.html", tab: {} }]) {
+    assert.equal(harness.message({ type: "missav-clear-metadata-cache" }, sender, () => assert.fail("untrusted clear")), false);
+  }
+  assert.equal((await createCacheHarness({}, { failWrites: true }).clearFromPopup()).ok, false);
+});
+
+test("MA-06 cache pruning retains at most 5000 fresh records", async () => {
+  const metadata = { genres: [], tags: [], type: "sample", duration: 1, actresses: [], cachedAt: Date.now() };
+  const cache = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`sample-${i}`, metadata]));
+  cache.old = { ...metadata, cachedAt: 1 };
+  const harness = createCacheHarness(cache);
+  await harness.query(["sample-new"]);
+  assert.equal(Object.keys(harness.state.videoMetadataById).length, 5000);
+  assert.equal(harness.state.metadataCacheCount, 5000);
+  assert.equal(harness.state.videoMetadataById.old, undefined);
+  assert.ok(harness.state.videoMetadataById["sample-new"]);
 });
