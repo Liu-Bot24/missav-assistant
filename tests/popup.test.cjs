@@ -100,7 +100,7 @@ function execute(options = {}) {
   }
   if (options.noStorage) delete chrome.storage;
   const context = {
-    chrome, document, TextEncoder,
+    chrome, document, TextEncoder, navigator: { locks: { request(_name, callback) { return callback(); } } },
     confirm(message) { confirmations.push(message); return options.confirm !== false; },
     setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout(id) { timers.delete(id); },

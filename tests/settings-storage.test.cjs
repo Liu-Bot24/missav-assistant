@@ -45,7 +45,8 @@ function harness(options = {}) {
     operation.callback(clone(operation.result));
     chrome.runtime.lastError = null;
   }
-  const context = { chrome, TextEncoder };
+  const context = { chrome, TextEncoder, navigator: { locks: options.locks ?? { request(_name, callback) { return callback(); } } } };
+  if (options.noLocks) delete context.navigator;
   vm.runInNewContext(source, context);
   const store = context.MissavSettingsStorage.create({ defaults });
   const result = (method, ...args) => {
@@ -54,6 +55,7 @@ function harness(options = {}) {
     return outcome;
   };
   return { data, calls, chrome, store, result, pending, complete,
+    createStore: () => context.MissavSettingsStorage.create({ defaults }),
     fail(name, method, message = "storage unavailable") { failures.push({ name, method, message }); },
     set deferGets(value) { deferGets = value; },
     emit(changes, area) { for (const listener of listeners) listener(changes, area); },
@@ -230,4 +232,45 @@ test("promise rejection and duplicate callbacks settle once", async () => {
   let calls = 0;
   h.store.read(() => calls++);
   assert.equal(calls, 1);
+});
+
+
+function sharedLocks() {
+  let tail = Promise.resolve();
+  return { request(_name, callback) {
+    const next = tail.then(callback);
+    tail = next.catch(() => {});
+    return next;
+  } };
+}
+
+test("cross-popup save and mode selection share a lock until storage acknowledgement", async () => {
+  for (const [initialMode, nextMode] of [["sync", "local"], ["local", "sync"]]) {
+    const h = harness({ locks: sharedLocks(), local: { [MODE]: initialMode, [LOCAL]: { enabled: false } }, sync: { enabled: true } });
+    const second = h.createStore();
+    h.deferGets = true;
+    const first = new Promise(resolve => h.store.save({ ...defaults, enabled: false }, initialMode, (error) => resolve(error)));
+    await new Promise(setImmediate);
+    if (initialMode === "sync") { h.complete(h.pending.shift()); }
+    let selected = false;
+    h.deferGets = false;
+    const selection = new Promise(resolve => second.select(nextMode, "existing", defaults, (error) => { selected = true; resolve(error); }));
+    await new Promise(setImmediate);
+    assert.equal(selected, false, "mode selection must wait for the earlier pending save");
+    h.complete(h.pending.shift());
+    assert.equal(await first, null);
+    assert.equal(await selection, null);
+    assert.equal(h.data.local[MODE], nextMode);
+    const before = h.calls.filter(call => call.method === "set").length;
+    const staleError = await new Promise(resolve => h.store.save(defaults, initialMode, error => resolve(error)));
+    assert.equal(staleError.modeChanged, true);
+    assert.equal(h.calls.filter(call => call.method === "set").length, before, "stale popup cannot write or reverse the selected mode");
+  }
+});
+
+test("missing shared-lock support rejects writes without changing either storage area", () => {
+  const h = harness({ noLocks: true });
+  assert.match(h.result("save", defaults, "local").error.message, /安全.*保存/);
+  assert.match(h.result("select", "local", "current", defaults).error.message, /安全.*保存/);
+  assert.equal(h.calls.some(call => call.method === "set"), false);
 });

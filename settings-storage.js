@@ -98,9 +98,36 @@
       }
     }
 
-    // The popup serializes saves. Verify the mode again so an already-open popup
-    // cannot silently write to an area that another extension page deselected.
+    // All popup contexts share this extension-origin Web Lock. Keep the mode
+    // read and write in one critical section, including the final acknowledgement.
+    // A per-popup queue alone cannot prevent another popup from changing modes.
+    function withWriteLock(action, callback) {
+      const locks = globalThis.navigator?.locks;
+      if (!locks?.request) {
+        callback(new Error("浏览器不支持安全的跨窗口保存，请更新浏览器后重试"));
+        return;
+      }
+      let finished = false;
+      const finish = (error, snapshot) => {
+        if (finished) return;
+        finished = true;
+        callback(error, snapshot);
+      };
+      try {
+        Promise.resolve(locks.request("missav-preference-writes", () => new Promise((resolve) => {
+          const release = (error, snapshot) => {
+            try { finish(error, snapshot); } finally { resolve(); }
+          };
+          try { action(release); } catch (error) { release(error); }
+        }))).catch((error) => finish(error));
+      } catch (error) { finish(error); }
+    }
+
     function save(value, expectedMode, callback) {
+      withWriteLock((done) => saveUnlocked(value, expectedMode, done), callback);
+    }
+
+    function saveUnlocked(value, expectedMode, callback) {
       read((error, snapshot) => {
         if (error) return callback(error);
         if (!["local", "sync"].includes(expectedMode) || snapshot.mode !== expectedMode) {
@@ -116,6 +143,10 @@
     // source=current replaces that destination only after the popup's explicit
     // informed choice. source=existing preserves both stored copies unchanged.
     function select(mode, source, current, callback) {
+      withWriteLock((done) => selectUnlocked(mode, source, current, done), callback);
+    }
+
+    function selectUnlocked(mode, source, current, callback) {
       if (!["local", "sync"].includes(mode) || !["current", "existing"].includes(source)) {
         callback(new Error("请选择有效的存储位置与设置副本"));
         return;

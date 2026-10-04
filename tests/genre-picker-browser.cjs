@@ -34,14 +34,16 @@ const root = path.join(__dirname, '..');
     check('category list has bounded scrolling', () => assert.ok(metrics.full > metrics.height && /auto|scroll/.test(metrics.overflow), JSON.stringify(metrics)));
     // A popup can lose focus to browser chrome while the menu stays open.
     await page.locator('#genreIncludeSearch').evaluate(el => el.blur());
+    // The underlying label must be inside the viewport for elementFromPoint.
+    await page.locator('.exclude-picker .genre-picker-label').scrollIntoViewIfNeeded();
     const overlap = await page.evaluate(() => {
       const list = document.querySelector('#genreIncludeSuggestions');
       const label = document.querySelector('.exclude-picker .genre-picker-label');
       const r = label.getBoundingClientRect();
       const el = document.elementFromPoint(r.x + 20, r.y + r.height / 2);
-      return list.contains(el);
+      return { covers: list.contains(el), label: r.toJSON(), menu: list.getBoundingClientRect().toJSON(), hit: el?.className ?? null };
     });
-    check('open menu covers underlying labels even after focus loss', () => assert.equal(overlap, true));
+    check('open menu covers underlying labels even after focus loss', () => assert.equal(overlap.covers, true, JSON.stringify(overlap)));
     fs.mkdirSync(path.join(root, 'output', 'playwright'), { recursive: true });
     await page.screenshot({ path: path.join(root, 'output', 'playwright', 'genre-picker.png'), fullPage: true });
     await page.locator('#genreIncludeSearch').fill('高清');
