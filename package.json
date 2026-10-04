@@ -3,12 +3,17 @@
   "version": "1.0.1",
   "private": true,
   "scripts": {
-    "test": "node --test tests/background.test.cjs tests/content.test.cjs tests/genre-library.test.cjs tests/actress-library.test.cjs tests/metadata-client.test.cjs tests/manifest.test.cjs",
+    "test": "node --test tests/*.test.cjs",
     "test:browser": "node tests/browser-performance.cjs",
     "test:popup": "node tests/popup-browser.cjs",
     "test:genre-picker": "node tests/genre-picker-browser.cjs",
     "test:actresses": "node tests/actress-browser.cjs",
     "test:pipeline": "node tests/pipeline-browser.cjs",
-    "test:templates": "node tests/template-browser.cjs"
+    "test:templates": "node tests/template-browser.cjs",
+    "test:audit-browser": "node tests/audit-browser.cjs",
+    "test:browser:all": "npm run test:browser && npm run test:popup && npm run test:genre-picker && npm run test:actresses && npm run test:pipeline && npm run test:templates && npm run test:audit-browser"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
   }
 }

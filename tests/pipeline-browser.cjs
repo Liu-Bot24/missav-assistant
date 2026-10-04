@@ -20,7 +20,7 @@ function markup(ids, next = null) {
 (async () => {
   fs.mkdirSync(out, { recursive: true });
   const context = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(out, 'profile-')), {
-    headless: true, viewport: { width: 1200, height: 700 },
+    channel: "chromium", headless: true, viewport: { width: 1200, height: 700 },
     args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
     ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
   });

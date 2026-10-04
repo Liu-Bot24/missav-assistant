@@ -11,7 +11,7 @@ test("Manifest V3 正确连接设置弹窗与存储权限", () => {
   assert.equal(manifest.name, "观看小助手");
   assert.equal(manifest.version, "1.0.1");
   assert.equal(manifest.action.default_popup, "popup.html");
-  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "metadata-client.js", "content.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "metadata-client.js", "settings-storage.js", "content.js"]);
   assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://client-rapi-missav.recombee.com/*"

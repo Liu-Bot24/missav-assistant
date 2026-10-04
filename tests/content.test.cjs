@@ -98,6 +98,9 @@ class FakeElement {
     if (selector === "div.thumbnail") return this.tagName === "DIV" && this.classList.contains("thumbnail");
     if (selector === "div.grid") return this.tagName === "DIV" && this.classList.contains("grid");
     if (selector === "a[href]") return this.tagName === "A" && this.attributes.has("href");
+    if (selector === "*") return true;
+    if (selector === "span") return this.tagName === "SPAN";
+    if (selector === 'base[href]') return this.tagName === "BASE" && this.attributes.has("href");
     if (selector === "img") return this.tagName === "IMG";
     if (selector === "button") return this.tagName === "BUTTON";
     if (selector === 'a[rel="next"][href]') {
@@ -164,6 +167,7 @@ class FakeElement {
   }
 
   getAttribute(name) {
+    if (name === "class") return [...this.classList.values].join(" ");
     return this.attributes.get(name) ?? null;
   }
 
@@ -174,6 +178,8 @@ class FakeElement {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
+
+  removeAttribute(name) { this.attributes.delete(name); }
 
   remove() {
     if (!this.parentElement) return;
@@ -304,6 +310,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     addEventListener() {}
   });
   const document = makeDocument(root);
+  const confirmedSettings = { genreExcludeRules: [], actressLimitEnabled: false, showActressNames: false, ...storedSettings };
   const chrome = {
     runtime: {
       lastError: null,
@@ -321,12 +328,12 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       }
     },
     storage: {
-      sync: {
-        get(defaults, callback) {
-          // Existing scenarios isolate label/genre behavior; cast scenarios opt in below.
-          callback({ ...defaults, genreExcludeRules: [], actressLimitEnabled: false, showActressNames: false, ...storedSettings });
+      local: {
+        get(_keys, callback) {
+          callback({ missavSettingsStorageMode: "local", missavLocalSettings: confirmedSettings });
         }
       },
+      sync: { get(_keys, callback) { callback({}); } },
       onChanged: {
         addListener(listener) {
           storageListener = listener;
@@ -341,10 +348,11 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     MutationObserver: FakeMutationObserver,
     IntersectionObserver: FakeIntersectionObserver,
     queueMicrotask,
-    URL,
+    URL, AbortController,
     location: { href: runtimeOptions.url ?? "https://missav.ai/new?page=1" },
-    fetch: async (url) => {
+    fetch: async (url, options) => {
       fetchCalls.push(url);
+      if (runtimeOptions.fetch) return runtimeOptions.fetch(url, options);
       if (!runtimeOptions.pages?.[url]) return { ok: false, status: 404 };
       return { ok: true, text: async () => url };
     },
@@ -363,6 +371,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
         windowListeners.set(type, listeners);
       }
     },
+    clearTimeout(id) { if (id) scheduledTimeouts[id - 1] = null; },
     setTimeout(listener, delay = 0) {
       if (delay === 0) {
         queueMicrotask(listener);
@@ -376,10 +385,16 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "metadata-client.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "label-library.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "site-library.js"), "utf8"), context);
-  vm.runInNewContext(source, context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "settings-storage.js"), "utf8"), context);
+  vm.runInNewContext(source.replace(/\}\)\(\);\s*$/, `globalThis.auditState = () => ({ paginationTask, paginationNeedsRetry, infiniteLoading, infiniteNeedsRetry, cachedPages: pageHtmlCache.size });
+    globalThis.auditRetry = retryMetadata;
+  })();`), context);
 
   return {
     observer,
+    state: context.auditState,
+    retry: context.auditRetry,
+    navigate(url, event = "popstate") { context.location.href = url; for (const listener of windowListeners.get(event) ?? []) listener(); },
     fetchCalls,
     metadataMessages,
     get documentQueryCount() {
@@ -399,13 +414,15 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       for (const listener of windowListeners.get("load") ?? []) listener();
     },
     runScheduledTimeouts() {
-      for (const listener of scheduledTimeouts.splice(0)) listener();
+      for (const listener of scheduledTimeouts.slice()) if (listener) listener();
+      scheduledTimeouts.fill(null);
     },
     get intersectionObserver() {
       return intersectionObserver;
     },
     changeSettings(changes) {
-      storageListener(changes, "sync");
+      for (const [key, change] of Object.entries(changes)) confirmedSettings[key] = change.newValue;
+      storageListener({ missavLocalSettings: { newValue: confirmedSettings } }, "local");
     }
   };
 }
@@ -1017,7 +1034,7 @@ test("动态插入卡片后会重新过滤", async () => {
   assert.equal(dynamic.layoutItem.classList.contains(HIDDEN_CLASS), true);
 });
 
-test("性能回归：样式和 class 变化不会重新启动整页两阶段筛选", async () => {
+test("性能回归：扩展自身 class 变化不会重新启动整页两阶段筛选", async () => {
   const card = makeCard([], { href: "https://missav.ai/allowed-001" });
   const runtime = execute(makePage([card]), {
     genreIncludeRules: [`value:${encodeURIComponent("素人")}`],
@@ -1033,13 +1050,15 @@ test("性能回归：样式和 class 变化不会重新启动整页两阶段筛�
   runtime.observer.callback([{
     type: "attributes",
     target: card.card,
-    attributeName: "class"
+    attributeName: "class",
+    oldValue: card.card.getAttribute("class")
   }]);
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(runtime.documentQueryCount, baselineQueries);
   assert.equal(runtime.observer.options.attributes, true);
-  assert.equal(Array.from(runtime.observer.options.attributeFilter).join(","), "style");
+  assert.deepEqual(Array.from(runtime.observer.options.attributeFilter), ["style", "href", "class", "hidden", "x-show"]);
+  assert.equal(runtime.observer.options.attributeOldValue, true);
   assert.equal(runtime.observer.options.characterData, undefined);
 });
 
@@ -1622,4 +1641,172 @@ test("分页补位不跟随指向外站的下一页链接", async () => {
   assert.equal(cards[0].wrapper.classList.contains(HIDDEN_CLASS), true);
   assert.equal(cards[1].wrapper.classList.contains(HIDDEN_CLASS), false);
   assert.equal(runtime.fetchCalls.length, 0);
+});
+
+
+test("MA-01 reused card href and badge visibility changes re-filter without unrelated settings", async () => {
+  const entry = makeCard([{ text: "ordinary" }], { href: "/cn/sample-001" });
+  const runtime = execute(makePage([entry, makeCard([])]));
+  await new Promise(setImmediate);
+  const link = entry.card.querySelector("a[href]");
+  link.setAttribute("href", "/cn/sample-001-uncensored-leak");
+  runtime.observer.callback([{ type: "attributes", target: link, attributeName: "href", oldValue: "/cn/sample-001" }]);
+  assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), true);
+  link.setAttribute("href", "/cn/sample-002");
+  runtime.observer.callback([{ type: "attributes", target: link, attributeName: "href", oldValue: "/cn/sample-001-uncensored-leak" }]);
+  assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), false);
+  const badge = entry.card.querySelector("span");
+  badge.textContent = "uncensored";
+  for (const attributeName of ["class", "hidden", "x-show"]) {
+    if (attributeName === "class") badge.classList.add("hidden");
+    if (attributeName === "hidden") badge.hidden = true;
+    if (attributeName === "x-show") badge.setAttribute("x-show", "item.has_chinese_subtitle");
+    runtime.observer.callback([{ type: "attributes", target: badge, attributeName, oldValue: "previous" }]);
+    assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), false, attributeName + " hide/condition change");
+    if (attributeName === "class") badge.classList.remove("hidden");
+    if (attributeName === "hidden") badge.hidden = false;
+    if (attributeName === "x-show") badge.setAttribute("x-show", "item.is_uncensored_leak");
+    runtime.observer.callback([{ type: "attributes", target: badge, attributeName, oldValue: "previous" }]);
+    assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), true, attributeName + " restore");
+  }
+});
+
+for (const phase of ["connection", "body"]) test(`MA-02 ${phase} deadline releases pagination and permits retry`, async () => {
+  const pageUrl = "https://missav.ai/cn/list?page=2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([])], "https://missav.ai/cn/list", pageUrl);
+  const next = makePaginatedPage([makeCard([], { href: "/cn/sample-002" })], pageUrl);
+  let capturedSignal;
+  let hung = true;
+  const runtime = execute(current.root, {}, { url: current.url, pages: { [pageUrl]: next.root },
+    fetch: async (_url, options) => { capturedSignal = options.signal; if (hung) {
+      if (phase === "connection") return new Promise(() => {});
+      return { ok: true, text: () => new Promise(() => {}) };
+    } return { ok: true, text: async () => pageUrl }; }
+  });
+  await new Promise(setImmediate);
+  runtime.runScheduledTimeouts();
+  await new Promise(setImmediate);
+  assert.equal(capturedSignal?.aborted, true);
+  assert.equal(runtime.state().paginationTask, null);
+  assert.equal(runtime.state().paginationNeedsRetry, true);
+  hung = false; runtime.retry();
+  await new Promise(setImmediate);
+  assert.equal(current.grid.children.length, 3);
+});
+
+test("MA-02 cancellation ignores late body and cache writes", async () => {
+  const pageUrl = "https://missav.ai/cn/list?page=2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([])], "https://missav.ai/cn/list", pageUrl);
+  const next = makePaginatedPage([makeCard([], { href: "/cn/sample-002" })], pageUrl);
+  let release, signal;
+  const runtime = execute(current.root, {}, { url: current.url, pages: { [pageUrl]: next.root },
+    fetch: async (_url, options) => { signal = options.signal; return { ok: true, text: () => new Promise(resolve => { release = resolve; }) }; }
+  });
+  await new Promise(setImmediate);
+  runtime.changeSettings({ enabled: { newValue: false } });
+  assert.equal(signal?.aborted, true);
+  release(pageUrl); await new Promise(setImmediate);
+  assert.equal(current.grid.children.length, 2);
+  assert.equal(runtime.state().cachedPages, 0);
+});
+
+test("MA-03 cross-directory links and lazy resources use source base with consistent deduplication", async () => {
+  const pageUrl = "https://missav.ai/cn/archive/page2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([], { href: "/cn/sample-002" })], "https://missav.ai/cn/list", pageUrl);
+  const next = makePaginatedPage([
+    makeCard([], { href: "../sample-002" }),
+    makeCard([], { href: "../sample-003", imageAttributes: { "data-src": "./cover.jpg", "data-srcset": "../small.jpg 1x, ./large.jpg 2x" } })
+  ], pageUrl);
+  execute(current.root, {}, { url: current.url, pages: { [pageUrl]: next.root } });
+  await new Promise(setImmediate);
+  const imported = current.grid.children[2];
+  assert.equal(imported.querySelector("a[href]").getAttribute("href"), "https://missav.ai/cn/sample-003");
+  assert.equal(imported.querySelector("img").getAttribute("src"), "https://missav.ai/cn/archive/cover.jpg");
+  assert.equal(imported.querySelector("img").getAttribute("srcset"), "https://missav.ai/cn/small.jpg 1x, https://missav.ai/cn/archive/large.jpg 2x");
+});
+
+test("MA-01 new href requests new metadata instead of retaining old settled identity", async () => {
+  const entry = makeCard([], { href: "/cn/sample-001" });
+  const runtime = execute(makePage([entry]), { genreIncludeRules: ["value:keep"] }, {
+    metadata: { "sample-001": { genres: ["keep"], tags: [], type: "sample", duration: 1 },
+      "sample-002": { genres: ["other"], tags: [], type: "sample", duration: 1 } }
+  });
+  await new Promise(setImmediate);
+  assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), false);
+  const link = entry.card.querySelector("a[href]");
+  link.setAttribute("href", "/cn/sample-002");
+  runtime.observer.callback([{ type: "attributes", target: link, attributeName: "href", oldValue: "/cn/sample-001" }]);
+  await new Promise(setImmediate);
+  assert.equal(entry.wrapper.classList.contains(HIDDEN_CLASS), true);
+  assert.ok(runtime.metadataMessages.some(message => message.itemIds.includes("sample-002")));
+});
+
+test("MA-02 navigation aborts requests and rejects stale source-page insertion", async () => {
+  const pageUrl = "https://missav.ai/cn/list?page=2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([])], "https://missav.ai/cn/list", pageUrl);
+  let release, signal;
+  const runtime = execute(current.root, {}, { url: current.url,
+    fetch: async (_url, options) => { signal = options.signal; return new Promise(resolve => { release = resolve; }); }
+  });
+  await new Promise(setImmediate);
+  runtime.navigate("https://missav.ai/cn/sample-123");
+  assert.equal(signal.aborted, true);
+  release({ ok: true, text: async () => pageUrl });
+  await new Promise(setImmediate);
+  assert.equal(current.grid.children.length, 2);
+  assert.equal(runtime.state().cachedPages, 0);
+  assert.equal(runtime.state().paginationTask, null);
+});
+
+test("MA-02 infinite-scroll timeout releases loading and marks retry", async () => {
+  const pageUrl = "https://missav.ai/cn/list?page=2";
+  const current = makePaginatedPage([makeCard([], { href: "/cn/sample-001" })], "https://missav.ai/cn/list", pageUrl);
+  let signal;
+  const runtime = execute(current.root, { infiniteScroll: true }, { url: current.url,
+    fetch: async (_url, options) => { signal = options.signal; return new Promise(() => {}); }
+  });
+  await new Promise(setImmediate);
+  runtime.intersectionObserver.callback([{ isIntersecting: true }]);
+  await new Promise(setImmediate);
+  runtime.runScheduledTimeouts(); await new Promise(setImmediate);
+  assert.equal(signal.aborted, true);
+  assert.equal(runtime.state().infiniteLoading, false);
+  assert.equal(runtime.state().infiniteNeedsRetry, true);
+});
+
+test("MA-02 older cancellation cannot release a newer pagination owner", async () => {
+  const pageUrl = "https://missav.ai/cn/list?page=2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([])], "https://missav.ai/cn/list", pageUrl);
+  const releases = [];
+  const runtime = execute(current.root, {}, { url: current.url,
+    fetch: () => new Promise(resolve => releases.push(resolve))
+  });
+  await new Promise(setImmediate);
+  runtime.changeSettings({ enabled: { newValue: false } });
+  runtime.changeSettings({ enabled: { newValue: true } });
+  await new Promise(setImmediate);
+  assert.equal(releases.length, 2);
+  const newer = runtime.state().paginationTask;
+  releases[0]({ ok: false, status: 503 }); await new Promise(setImmediate);
+  assert.equal(runtime.state().paginationTask, newer);
+  assert.equal(runtime.state().paginationNeedsRetry, false);
+  releases[1]({ ok: false, status: 503 }); await new Promise(setImmediate);
+  assert.equal(runtime.state().paginationTask, null);
+  assert.equal(runtime.state().paginationNeedsRetry, true);
+});
+
+test("MA-03 legal base is honored, unsafe URL schemes are stripped, and pagination stays same-origin", async () => {
+  const pageUrl = "https://missav.ai/cn/archive/page2";
+  const current = makePaginatedPage([makeCard([{ text: "uncensored" }]), makeCard([], { href: "/cn/sample-001" })], "https://missav.ai/cn/list", pageUrl);
+  const next = makePaginatedPage([makeCard([], { href: "sample-002", imageAttributes: {
+    src: "javascript:alert(1)", "data-src": "/safe.jpg", "data-srcset": "data:image/png;base64,AAAA 1x, /large.jpg 2x"
+  } })], pageUrl, "https://other.example.test/page3");
+  next.root.append(new FakeElement({ tagName: "BASE", attributes: { href: "/cn/catalog/" } }));
+  const runtime = execute(current.root, {}, { url: current.url, pages: { [pageUrl]: next.root } });
+  await new Promise(setImmediate);
+  const imported = current.grid.children[2];
+  assert.equal(imported.querySelector("a[href]").getAttribute("href"), "https://missav.ai/cn/catalog/sample-002");
+  assert.equal(imported.querySelector("img").getAttribute("src"), "https://missav.ai/safe.jpg");
+  assert.equal(imported.querySelector("img").getAttribute("srcset"), "https://missav.ai/large.jpg 2x");
+  assert.equal(runtime.fetchCalls.length, 1);
 });
