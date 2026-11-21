@@ -88,8 +88,10 @@ function createCacheHarness(initialState = {}, options = {}) {
 const sampleRecord = (cachedAt) => ({
   genres: ["sample"], tags: [], type: "sample", duration: 15000, actresses: ["松本いちか"], cachedAt
 });
+// Recent timestamps in insertion order, all within the refresh period.
+const recent = (i) => Date.now() - 3_600_000 + i;
 const perVideoCache = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) =>
-  [`md:sample-${i}`, sampleRecord(i + 1)]));
+  [`md:sample-${i}`, sampleRecord(recent(i))]));
 
 test("性能：多个页面同时查询重叠番号只发出一次在途查询", async () => {
   const harness = createCacheHarness();
@@ -108,7 +110,7 @@ test("性能：多个页面同时查询重叠番号只发出一次在途查询",
 
 test("旧版整份缓存一次性迁移为逐片存储，之后每次只读取所查影片", async () => {
   const legacy = Object.fromEntries(Array.from({ length: 5000 }, (_, i) =>
-    [`sample-${i}`, { ...sampleRecord(i + 1), cast: { confirmedCount: 1 } }]));
+    [`sample-${i}`, { ...sampleRecord(recent(i)), cast: { confirmedCount: 1 } }]));
   const harness = createCacheHarness({ videoMetadataById: legacy });
   for (let i = 0; i < 12; i += 1) {
     assert.equal((await harness.query([`sample-${i}`])).items[`sample-${i}`].duration, 15000);
@@ -151,10 +153,35 @@ test("新增超过余量后按缓存时间淘汰最旧记录，保留新查到�
   assert.equal(Object.hasOwn(harness.state, "md:sample-510"), true);
 });
 
+test("缓存超过一周或时间异常时重新查询并更新", async () => {
+  const week = 7 * 24 * 60 * 60 * 1000;
+  const harness = createCacheHarness({
+    "md:old-001": { ...sampleRecord(Date.now() - week - 1000), duration: 1 },
+    "md:future-001": { ...sampleRecord(Date.now() + week), duration: 1 },
+    "md:fresh-001": { ...sampleRecord(Date.now() - week + 60_000), duration: 1 }
+  });
+  const response = await harness.query(["old-001", "future-001", "fresh-001"]);
+  assert.equal(harness.metrics.fetches, 1);
+  assert.equal(response.items["old-001"].duration, 15000, "过期记录用新数据");
+  assert.equal(response.items["future-001"].duration, 15000);
+  assert.equal(response.items["fresh-001"].duration, 1, "一周内的记录直接使用");
+  assert.ok(Date.now() - harness.state["md:old-001"].cachedAt < 60_000, "刷新后重新计时");
+  assert.equal(harness.state.metadataCacheCount, 3, "刷新不重复计数");
+});
+
+test("刷新失败时仍用过期记录，没有缓存的影片留给页面重试", async () => {
+  const harness = createCacheHarness({
+    "md:old-001": { ...sampleRecord(Date.now() - 8 * 24 * 60 * 60 * 1000), duration: 1 }
+  }, { fetchFailures: 1 });
+  const response = await harness.query(["old-001", "new-001"]);
+  assert.equal(response.items["old-001"].duration, 1);
+  assert.equal(Object.hasOwn(response.items, "new-001"), false);
+});
+
 test("合并查询失败后释放在途项，下一次请求可以恢复", async () => {
   const harness = createCacheHarness({}, { fetchFailures: 1 });
   const failed = await Promise.all(Array.from({ length: 3 }, () => harness.query(["sample-001"])));
-  assert.ok(failed.every((response) => response.ok === false));
+  assert.ok(failed.every((response) => !Object.hasOwn(response.items, "sample-001")), "失败的影片不出现在结果里，页面会重试");
   const recovered = await harness.query(["sample-001"]);
   assert.equal(recovered.ok, true);
   assert.equal(recovered.items["sample-001"].duration, 15000);

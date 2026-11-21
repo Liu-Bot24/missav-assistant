@@ -7,6 +7,8 @@ const API_HOST = "https://client-rapi-missav.recombee.com";
 const PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV";
 const MAX_BATCH_SIZE = 30;
 const MAX_METADATA_CACHE_ITEMS = 5000;
+// Categories and casts on the site are corrected over time, so records are refreshed weekly.
+const METADATA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Pruning reads every record, so it runs once per this many additions, not per write.
 const METADATA_CACHE_PRUNE_SLACK = 500;
 // Each video is its own storage key, so a write touches only the videos it adds.
@@ -62,6 +64,11 @@ function sanitizeMetadata(value) {
     actresses,
     cast: MissavActressLibrary.resolve(actresses)
   };
+}
+
+function isFreshRecord(record, now) {
+  const cachedAt = Number(record?.cachedAt);
+  return Number.isFinite(cachedAt) && cachedAt > 0 && cachedAt <= now && now - cachedAt < METADATA_CACHE_TTL_MS;
 }
 
 function isCompleteMetadata(metadata) {
@@ -222,22 +229,31 @@ async function queryMetadata(itemIds) {
 
   await prepareMetadataCache();
   const stored = await chrome.storage.local.get(ids.map(metadataKey));
+  const now = Date.now();
   const metadataById = {};
   const missingIds = [];
   const absentIds = new Set();
+  const staleById = {};
 
   for (const id of ids) {
     const record = stored[metadataKey(id)];
     if (record === undefined) absentIds.add(id);
     const cached = sanitizeMetadata(record);
-    if (isCompleteMetadata(cached)) metadataById[id] = cached;
-    else missingIds.push(id);
+    if (!isCompleteMetadata(cached)) {
+      missingIds.push(id);
+    } else if (isFreshRecord(record, now)) {
+      metadataById[id] = cached;
+    } else {
+      staleById[id] = cached;
+      missingIds.push(id);
+    }
   }
 
   if (missingIds.length > 0) {
     const newIds = missingIds.filter((id) => !metadataInFlight.has(id));
     if (newIds.length > 0) {
-      const pending = fetchMetadata(newIds).then(async (fetched) => {
+      // A failed refresh leaves the IDs out; stale records then still answer.
+      const pending = fetchMetadata(newIds).catch(() => ({})).then(async (fetched) => {
         await saveMetadataCache(fetched, absentIds).catch(() => {});
         return fetched;
       }).finally(() => {
@@ -247,7 +263,8 @@ async function queryMetadata(itemIds) {
     }
     const fetchedPairs = await Promise.all(missingIds.map(async (id) => {
       const fetched = await metadataInFlight.get(id);
-      return Object.hasOwn(fetched, id) ? [id, fetched[id]] : null;
+      if (Object.hasOwn(fetched, id)) return [id, fetched[id]];
+      return staleById[id] ? [id, staleById[id]] : null;
     }));
     Object.assign(metadataById, Object.fromEntries(fetchedPairs.filter(Boolean)));
   }
