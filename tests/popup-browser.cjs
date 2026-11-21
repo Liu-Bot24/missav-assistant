@@ -12,25 +12,38 @@ const root = path.join(__dirname, '..');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      window.saved = { blockedPresets: ['english-subtitle'], customLabels: ['obsolete'], genreExcludeRules: [] };
+      window.saved = { settingsStorage: 'local', blockedPresets: ['english-subtitle'], customLabels: ['obsolete'], genreExcludeRules: [] };
+      window.syncSaved = { enabled: true, hideUntagged: false, unrelated: 1 };
+      // Callback form of chrome.storage areas: merging set, key lists or defaults on get.
+      const area = (name) => ({
+        get(keys, cb) {
+          const state = window[name];
+          const defaults = keys && !Array.isArray(keys) && typeof keys === 'object' ? keys : {};
+          const list = Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(defaults);
+          cb(Object.fromEntries(list.filter((key) => Object.hasOwn(state, key) || Object.hasOwn(defaults, key))
+            .map((key) => [key, Object.hasOwn(state, key) ? structuredClone(state[key]) : defaults[key]])));
+        },
+        set(value, cb) { window.lastSet = structuredClone(value); window[name] = { ...window[name], ...structuredClone(value) }; cb?.(); },
+        remove(keys, cb) { const next = { ...window[name] }; for (const key of [].concat(keys)) delete next[key]; window[name] = next; cb?.(); }
+      });
       window.chrome = { runtime: {},
         tabs: { query(_options, callback) { callback([{ id: 1 }]); },
           sendMessage(_id, _message, callback) { callback({ compatible: true, metadata: "missav", pageKind: "list" }); } },
-        storage: {
-        sync: { get(defaults, cb) { cb({ ...defaults, ...window.saved }); },
-          set(settings, cb) { window.saved = structuredClone(settings); cb(); } },
-        local: { get(defaults, cb) { cb(defaults); } },
-        onChanged: { addListener() {} }
-      } };
+        storage: { local: area('saved'), sync: area('syncSaved'), onChanged: { addListener() {} } } };
     });
     await page.goto(pathToFileURL(path.join(root, 'popup.html')).href);
+    assert.equal(await page.locator('#syncNotice').isVisible(), true, 'an old account copy is reported');
+    await page.locator('#removeSyncCopy').click();
+    assert.equal(await page.locator('#syncNotice').isVisible(), false);
+    assert.deepEqual(await page.evaluate(() => window.syncSaved), { unrelated: 1 }, 'only preference keys are removed');
     assert.equal(await page.locator('[value="other-subtitle"]').isChecked(), true);
     assert.equal(await page.locator('#customForm').count(), 0);
     assert.equal(await page.locator('#ruleSummary').textContent(), '当前启用 2 条规则');
     await page.locator('label.rule-row').filter({ has: page.locator('#hideUntagged') }).click();
     assert.equal(await page.evaluate(() => window.saved.hideUntagged), true);
     assert.deepEqual(await page.evaluate(() => window.saved.blockedPresets), ['other-subtitle']);
-    assert.equal(await page.evaluate(() => Object.hasOwn(window.saved, 'customLabels')), false);
+    assert.equal(await page.evaluate(() => Object.hasOwn(window.lastSet, 'customLabels')), false);
+    assert.equal(await page.evaluate(() => Object.hasOwn(window.syncSaved, 'hideUntagged')), false, 'saving never writes the account copy');
     assert.equal(await page.locator('h1').textContent(), '观看小助手');
     assert.equal(await page.locator('#homepageEnabled').isChecked(), true);
     await page.locator('label.scroll-control').filter({ has: page.locator('#homepageEnabled') }).click();

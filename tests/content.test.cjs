@@ -321,10 +321,11 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       }
     },
     storage: {
-      sync: {
-        get(defaults, callback) {
+      local: {
+        get(_keys, callback) {
           // Existing scenarios isolate label/genre behavior; cast scenarios opt in below.
-          callback({ ...defaults, genreExcludeRules: [], actressLimitEnabled: false, showActressNames: false, ...storedSettings });
+          callback({ settingsStorage: "local", genreExcludeRules: [], actressLimitEnabled: false,
+            showActressNames: false, ...storedSettings });
         }
       },
       onChanged: {
@@ -375,6 +376,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
   vm.runInNewContext(genreLibrarySource, context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "metadata-client.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "label-library.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "settings.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "site-library.js"), "utf8"), context);
   vm.runInNewContext(source, context);
 
@@ -405,7 +407,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       return intersectionObserver;
     },
     changeSettings(changes) {
-      storageListener(changes, "sync");
+      storageListener(changes, "local");
     }
   };
 }

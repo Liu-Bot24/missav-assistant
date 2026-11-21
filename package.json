@@ -3,7 +3,7 @@
   "version": "1.0.1",
   "private": true,
   "scripts": {
-    "test": "node --test tests/background.test.cjs tests/content.test.cjs tests/genre-library.test.cjs tests/actress-library.test.cjs tests/metadata-client.test.cjs tests/manifest.test.cjs",
+    "test": "node --test tests/background.test.cjs tests/content.test.cjs tests/genre-library.test.cjs tests/actress-library.test.cjs tests/metadata-client.test.cjs tests/settings.test.cjs tests/manifest.test.cjs",
     "test:browser": "node tests/browser-performance.cjs",
     "test:popup": "node tests/popup-browser.cjs",
     "test:genre-picker": "node tests/genre-picker-browser.cjs",

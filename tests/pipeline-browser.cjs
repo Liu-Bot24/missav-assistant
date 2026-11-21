@@ -94,7 +94,7 @@ function markup(ids, next = null) {
           id, values: valuesFor(id)
         }] } })), { status: 200 });
       };
-      await chrome.storage.sync.set({ enabled: true, homepageEnabled: true, infiniteScroll: true,
+      await chrome.storage.local.set({ enabled: true, homepageEnabled: true, infiniteScroll: true,
         blockedPresets: [], genreIncludeRules: [], genreExcludeRules: ['value:blocked'],
         actressLimitEnabled: false, showActressNames: true });
     });
@@ -133,10 +133,10 @@ function markup(ids, next = null) {
     await page.waitForSelector('.missav-content-filter-sentinel.is-complete');
     assert.equal(await page.locator('[data-id="third-single-001"] .missav-actress-names').count(), 1);
     assert.equal(await page.locator('[data-id="third-blocked-001"]').count(), 0);
-    await worker.evaluate(() => chrome.storage.sync.set({ showActressNames: false }));
+    await worker.evaluate(() => chrome.storage.local.set({ showActressNames: false }));
     await page.waitForFunction(() => !document.querySelector('.missav-actress-names'));
     assert.equal(await page.locator('[data-missav-filter-refill]').count(), 3, 'names toggle preserves loaded pages');
-    await worker.evaluate(() => chrome.storage.sync.set({ showActressNames: true }));
+    await worker.evaluate(() => chrome.storage.local.set({ showActressNames: true }));
     await page.waitForFunction(() => document.querySelectorAll('.missav-actress-names').length === 4);
     assert.equal((await worker.evaluate(() => requests)).flat().filter(id => id === 'next-single-001').length, 1);
     await page.screenshot({ path: path.join(out, 'three-pages.png'), fullPage: false });
@@ -150,7 +150,7 @@ function markup(ids, next = null) {
     assert.equal(await asyncPage.locator('[data-id="async-000"].missav-content-filter-genre-hidden').count(), 1);
     assert.equal(await asyncPage.locator('[data-id="async-001"]').isVisible(), true);
     assert.deepEqual(await worker.evaluate(() => requests.map(ids => ids.length)), [30, 30, 5]);
-    await worker.evaluate(() => chrome.storage.sync.set({ showActressNames: false }));
+    await worker.evaluate(() => chrome.storage.local.set({ showActressNames: false }));
     await asyncPage.waitForFunction(() => !document.querySelector('.missav-actress-names'));
     // New native DOM is handled even while a separate data batch remains pending.
     await asyncPage.locator('.grid').evaluate(grid => {
@@ -161,14 +161,14 @@ function markup(ids, next = null) {
     });
     await asyncPage.waitForSelector('[data-id="new-native-001"].missav-content-filter-hidden', { state: 'attached' });
     assert.equal(await asyncPage.locator('[data-id="new-native-001"]').isVisible(), false);
-    await worker.evaluate(() => chrome.storage.sync.set({ genreExcludeRules: [] }));
+    await worker.evaluate(() => chrome.storage.local.set({ genreExcludeRules: [] }));
     await asyncPage.waitForFunction(() => !document.querySelector('.missav-content-filter-hidden'));
     await worker.evaluate(() => { holdId = null; releaseMetadata(); });
     await asyncPage.waitForTimeout(100);
     assert.equal(await asyncPage.locator('.missav-content-filter-hidden').count(), 0,
       'late metadata must use the current filter rules');
     assert.equal(await asyncPage.locator('.missav-actress-names').count(), 0);
-    await worker.evaluate(() => chrome.storage.sync.set({ genreExcludeRules: ['value:blocked'], showActressNames: true }));
+    await worker.evaluate(() => chrome.storage.local.set({ genreExcludeRules: ['value:blocked'], showActressNames: true }));
     await asyncPage.waitForSelector('[data-id="async-030"] .missav-actress-names');
     assert.equal(await asyncPage.locator('[data-id="async-000"]').isVisible(), false);
     assert.equal(await worker.evaluate(() => requests.length), 3, 'rule and display changes reuse available metadata');
@@ -180,9 +180,9 @@ function markup(ids, next = null) {
     await clickNext(stale);
     for (let i = 0; i < 40 && !oldPageWaiting; i++) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(oldPageWaiting, true);
-    await worker.evaluate(() => chrome.storage.sync.set({ enabled: false }));
+    await worker.evaluate(() => chrome.storage.local.set({ enabled: false }));
     await stale.waitForFunction(() => !document.querySelector('.missav-content-filter-sentinel'));
-    await worker.evaluate(() => chrome.storage.sync.set({ enabled: true }));
+    await worker.evaluate(() => chrome.storage.local.set({ enabled: true }));
     await stale.waitForSelector('.missav-content-filter-sentinel');
     await clickNext(stale);
     await stale.waitForSelector('[data-id="stale-201"] .missav-actress-names');
@@ -196,7 +196,7 @@ function markup(ids, next = null) {
     await stale.close();
     console.log('PASS obsolete page request isolation after disable/re-enable');
 
-    await worker.evaluate(() => chrome.storage.sync.set({ actressLimitEnabled: true,
+    await worker.evaluate(() => chrome.storage.local.set({ actressLimitEnabled: true,
       genreExcludeRules: ['value:blocked', 'group:duration-4h-plus'] }));
     const partial = await open('https://missav.ai/cn/incomplete');
     await partial.waitForSelector('.missav-content-filter-retry');
@@ -215,7 +215,7 @@ function markup(ids, next = null) {
 
     await worker.evaluate(async () => {
       failedIds = ['refill-failed-001'];
-      await chrome.storage.sync.set({ infiniteScroll: false });
+      await chrome.storage.local.set({ infiniteScroll: false });
     });
     const refill = await open('https://missav.ai/cn/refill-retry');
     await refill.waitForSelector('[data-id="refill-fast-001"] .missav-actress-names');
@@ -234,7 +234,7 @@ function markup(ids, next = null) {
     await worker.evaluate(async () => {
       holdId = 'names-slow-001';
       releaseMetadata = null;
-      await chrome.storage.sync.set({ actressLimitEnabled: false, genreExcludeRules: [], infiniteScroll: true });
+      await chrome.storage.local.set({ actressLimitEnabled: false, genreExcludeRules: [], infiniteScroll: true });
     });
     const namesOnly = await open('https://missav.ai/cn/names-only');
     await namesOnly.waitForSelector('[data-id="names-first-001"] .missav-actress-names');
@@ -251,7 +251,7 @@ function markup(ids, next = null) {
     await namesOnly.close();
     console.log('PASS display-only names do not delay insertion or the next page');
 
-    await worker.evaluate(() => chrome.storage.sync.set({ infiniteScroll: false, genreExcludeRules: ['value:blocked'] }));
+    await worker.evaluate(() => chrome.storage.local.set({ infiniteScroll: false, genreExcludeRules: ['value:blocked'] }));
     const htmlRetry = await open('https://missav.ai/cn/html-retry');
     await htmlRetry.waitForSelector('.missav-content-filter-retry');
     await htmlRetry.locator('.missav-content-filter-retry').evaluate(el => el.click());

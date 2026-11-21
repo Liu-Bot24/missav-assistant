@@ -35,6 +35,7 @@
         "site-library.js",
         "label-library.js",
         "genre-library.js",
+        "settings.js",
         "metadata-client.js",
         "content.js"
       ],

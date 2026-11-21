@@ -92,14 +92,14 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
             actresses: names[request.params.searchQuery], actresses_count: 99 }
         }] } }))), { status: 200, headers: { 'Content-Type': 'application/json' } });
       };
-      await chrome.storage.sync.set({ enabled: true, homepageEnabled: true,
+      await chrome.storage.local.set({ enabled: true, homepageEnabled: true,
         blockedPresets: [], genreIncludeRules: [], genreExcludeRules: [],
         actressLimitEnabled: true, maxActresses: 3, showActressNames: true, infiniteScroll: false });
       await chrome.storage.local.set({ videoMetadataById: {
         'single-001': { genres: [], tags: [], duration: 7200, type: 'jav' }
       } });
     }, fixtureNames);
-    const settings = value => worker.evaluate(value => chrome.storage.sync.set(value), value);
+    const settings = value => worker.evaluate(value => chrome.storage.local.set(value), value);
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('https://missav.ai/cn/new');

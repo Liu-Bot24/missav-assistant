@@ -11,7 +11,7 @@ test("Manifest V3 正确连接设置弹窗与存储权限", () => {
   assert.equal(manifest.name, "观看小助手");
   assert.equal(manifest.version, "1.0.1");
   assert.equal(manifest.action.default_popup, "popup.html");
-  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "metadata-client.js", "content.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "settings.js", "metadata-client.js", "content.js"]);
   assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://client-rapi-missav.recombee.com/*"
@@ -34,6 +34,7 @@ test("Manifest 引用的本地资源全部存在", () => {
     ...manifest.content_scripts[0].js,
     "popup.css",
     "popup.js",
+    "settings.js",
     "actress-data.js",
     "actress-library.js",
     "third-party/amane/LICENSE",
@@ -53,6 +54,8 @@ test("设置弹窗不包含远程资源或内联脚本", () => {
   assert.match(html, /<script src="genre-library\.js"><\/script>/);
   assert.match(html, /<script src="popup\.js"><\/script>/);
   assert.match(html, /<script src="label-library\.js"><\/script>/);
+  assert.match(html, /<script src="settings\.js"><\/script>/);
+  assert.ok(html.indexOf('src="settings.js"') < html.indexOf('src="popup.js"'));
   assert.match(html, /value="other-subtitle"/);
   assert.doesNotMatch(html, /customForm|customLabel/);
   assert.match(html, /id="infiniteScroll"/);

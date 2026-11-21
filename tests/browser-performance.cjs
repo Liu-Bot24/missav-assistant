@@ -51,13 +51,18 @@ async function install(page, source, count, home = false, slow = false) {
         if (slow && metrics.messages > 1) window.releaseMetadata = reply;
         else setTimeout(reply, 40);
       } },
-      storage: {
-        sync: { get(defaults, callback) {
-          callback({ ...defaults, actressLimitEnabled: false, showActressNames: false,
-            blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] });
-        } },
-        onChanged: { addListener(listener) { window.changeSettings = listener; } }
-      }
+      storage: (() => {
+        const stored = { actressLimitEnabled: false, showActressNames: false,
+          blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] };
+        // Current builds read the local area; an optional baseline build may read sync.
+        return {
+          local: { get(_keys, callback) { callback({ settingsStorage: "local", ...stored }); } },
+          sync: { get(defaults, callback) { callback({ ...defaults, ...stored }); } },
+          onChanged: { addListener(listener) {
+            window.changeSettings = (changes) => { listener(changes, "local"); listener(changes, "sync"); };
+          } }
+        };
+      })()
     };
     if (home) more.addEventListener("click", () => {
       metrics.clicks += 1;
@@ -76,6 +81,7 @@ async function install(page, source, count, home = false, slow = false) {
   await page.addScriptTag({ path: path.join(root, "label-library.js") });
   await page.addScriptTag({ path: path.join(root, "metadata-client.js") });
   await page.addScriptTag({ content: library });
+  await page.addScriptTag({ path: path.join(root, "settings.js") });
   return page.evaluate(async (source) => {
     const start = performance.now();
     (0, eval)(source);
@@ -164,14 +170,14 @@ async function measure(browser, source, count) {
       assert.equal(state.clicks, 1, "九项合格结果应停止补位");
       await home.evaluate(() => {
         window.observeFrames = false;
-        changeSettings({ homepageEnabled: { newValue: false } }, 'sync');
+        changeSettings({ homepageEnabled: { newValue: false } });
         grid.append(makeCard(9999, true));
       });
       await home.waitForTimeout(100);
       assert.equal(await home.locator('.missav-content-filter-hidden').count(), 0);
       assert.equal(await home.locator('.missav-content-filter-grid-settling').count(), 0);
       assert.equal(await home.evaluate(() => metrics.clicks), 1);
-      await home.evaluate(() => changeSettings({ homepageEnabled: { newValue: true } }, 'sync'));
+      await home.evaluate(() => changeSettings({ homepageEnabled: { newValue: true } }));
       await home.waitForFunction(() => getComputedStyle(grid.lastElementChild).display === 'none');
       assert.equal(await home.evaluate(() => metrics.clicks), 1);
       console.log(JSON.stringify({ homepageToggle: 'restores native cards and resumes filtering' }));

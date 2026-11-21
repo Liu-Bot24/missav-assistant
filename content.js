@@ -2,18 +2,8 @@
   "use strict";
 
   let site;
-  const DEFAULT_SETTINGS = Object.freeze({
-    enabled: true,
-    homepageEnabled: true,
-    hideUntagged: false,
-    infiniteScroll: false,
-    actressLimitEnabled: true,
-    maxActresses: 3,
-    showActressNames: true,
-    blockedPresets: ["uncensored"],
-    genreIncludeRules: [],
-    genreExcludeRules: ["group:gender-diverse"]
-  });
+  const DEFAULT_SETTINGS = MissavSettings.DEFAULTS;
+  const sanitizeSettings = MissavSettings.sanitize;
   const LIST_ROUTE_SEGMENTS = new Set([
     "actress", "actresses", "genre", "genres", "label", "labels",
     "maker", "makers", "search", "series", "tag", "tags"
@@ -106,33 +96,6 @@
 
   function isFilteringActive() {
     return settings.enabled && !isVideoDetailPage() && (settings.homepageEnabled || !isHomePage());
-  }
-
-  function sanitizeSettings(value) {
-    const sanitizeGenreRules = (rules, fallback) => Array.isArray(rules)
-      ? [...new Set(rules.map(MissavGenreLibrary.normalizeRule).filter(Boolean))]
-      : [...fallback];
-
-    return {
-      enabled: value?.enabled !== false,
-      homepageEnabled: value?.homepageEnabled !== false,
-      hideUntagged: value?.hideUntagged === true,
-      infiniteScroll: value?.infiniteScroll === true,
-      actressLimitEnabled: value?.actressLimitEnabled !== false,
-      maxActresses: Number.isSafeInteger(Number(value?.maxActresses)) && Number(value.maxActresses) >= 0 &&
-        value.maxActresses !== null && value.maxActresses !== ""
-        ? Number(value.maxActresses) : DEFAULT_SETTINGS.maxActresses,
-      showActressNames: value?.showActressNames !== false,
-      blockedPresets: MissavLabelLibrary.sanitizePresets(value?.blockedPresets),
-      genreIncludeRules: sanitizeGenreRules(
-        value?.genreIncludeRules,
-        DEFAULT_SETTINGS.genreIncludeRules
-      ),
-      genreExcludeRules: sanitizeGenreRules(
-        value?.genreExcludeRules,
-        DEFAULT_SETTINGS.genreExcludeRules
-      )
-    };
   }
 
   function isBadge(element) {
@@ -1418,8 +1381,8 @@
 
   function startFiltering(capabilities) {
     site = capabilities;
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (storedSettings) => {
-      settings = sanitizeSettings(storedSettings);
+    MissavSettings.load((storedSettings) => {
+      settings = storedSettings;
 
       if (document.documentElement) {
         startObserver();
@@ -1429,20 +1392,13 @@
     });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "sync") {
-        return;
-      }
+      if (areaName !== "local") return;
+      const changedKeys = MissavSettings.changedSettings(changes);
+      if (changedKeys.length === 0) return;
 
       const nextSettings = { ...settings };
-      for (const key of Object.keys(DEFAULT_SETTINGS)) {
-        if (changes[key]) {
-          nextSettings[key] = changes[key].newValue;
-        }
-      }
-
+      for (const key of changedKeys) nextSettings[key] = changes[key].newValue;
       settings = sanitizeSettings(nextSettings);
-      const changedKeys = Object.keys(DEFAULT_SETTINGS).filter((key) => changes[key]);
-      if (changedKeys.length === 0) return;
       if (changedKeys.every((key) => key === "showActressNames")) {
         scheduleScan();
         return;

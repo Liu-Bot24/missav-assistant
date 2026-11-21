@@ -1,25 +1,14 @@
 (() => {
   "use strict";
 
-  const DEFAULT_SETTINGS = Object.freeze({
-    enabled: true,
-    homepageEnabled: true,
-    hideUntagged: false,
-    infiniteScroll: false,
-    actressLimitEnabled: true,
-    maxActresses: 3,
-    showActressNames: true,
-    blockedPresets: ["uncensored"],
-    genreIncludeRules: [],
-    genreExcludeRules: ["group:gender-diverse"]
-  });
-  let settings = { ...DEFAULT_SETTINGS };
+  const DEFAULT_SETTINGS = MissavSettings.DEFAULTS;
+  const sanitizeSettings = MissavSettings.sanitize;
+  let settings = sanitizeSettings(DEFAULT_SETTINGS);
   let discoveredTypes = [];
   let siteStatus = null;
   let metadataCacheCount = 0;
   let saveTimer;
   let openGenrePicker = null;
-  const syncStorage = globalThis.chrome?.storage?.sync;
   const localStorageApi = globalThis.chrome?.storage?.local;
 
   const elements = {
@@ -44,37 +33,13 @@
     genreExplainer: document.querySelector("#genreExplainer"),
     statusBadge: document.querySelector("#statusBadge"),
     saveState: document.querySelector("#saveState"),
-    resetButton: document.querySelector("#resetButton")
+    resetButton: document.querySelector("#resetButton"),
+    syncNotice: document.querySelector("#syncNotice"),
+    removeSyncCopy: document.querySelector("#removeSyncCopy")
   };
 
   function normalizeForComparison(value) {
     return String(value).normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
-  }
-
-  function sanitizeSettings(value) {
-    const sanitizeGenreRules = (rules, fallback) => Array.isArray(rules)
-      ? [...new Set(rules.map(MissavGenreLibrary.normalizeRule).filter(Boolean))]
-      : [...fallback];
-    return {
-      enabled: value?.enabled !== false,
-      homepageEnabled: value?.homepageEnabled !== false,
-      hideUntagged: value?.hideUntagged === true,
-      infiniteScroll: value?.infiniteScroll === true,
-      actressLimitEnabled: value?.actressLimitEnabled !== false,
-      maxActresses: Number.isSafeInteger(Number(value?.maxActresses)) && Number(value.maxActresses) >= 0 &&
-        value.maxActresses !== null && value.maxActresses !== ""
-        ? Number(value.maxActresses) : DEFAULT_SETTINGS.maxActresses,
-      showActressNames: value?.showActressNames !== false,
-      blockedPresets: MissavLabelLibrary.sanitizePresets(value?.blockedPresets),
-      genreIncludeRules: sanitizeGenreRules(
-        value?.genreIncludeRules,
-        DEFAULT_SETTINGS.genreIncludeRules
-      ),
-      genreExcludeRules: sanitizeGenreRules(
-        value?.genreExcludeRules,
-        DEFAULT_SETTINGS.genreExcludeRules
-      )
-    };
   }
 
   function addGenreRule(rule, mode) {
@@ -273,20 +238,40 @@
     });
   }
 
+  function showSaveState(message, sticky = false) {
+    elements.saveState.textContent = message;
+    clearTimeout(saveTimer);
+    if (sticky) return;
+    saveTimer = setTimeout(() => {
+      elements.saveState.textContent = "设置自动保存";
+    }, 1600);
+  }
+
   function persist() {
     settings = sanitizeSettings(settings);
     render();
-    const finishSave = () => {
-      elements.saveState.textContent = "已保存，页面将自动更新";
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        elements.saveState.textContent = "设置自动保存";
-      }, 1600);
-    };
-
-    if (syncStorage) syncStorage.set(settings, finishSave);
-    else finishSave();
+    MissavSettings.save(settings, (error) => {
+      if (error) showSaveState("保存失败，请再改一次", true);
+      else showSaveState("已保存，页面将自动更新");
+    });
   }
+
+  function readSyncCopy() {
+    MissavSettings.hasSyncCopy((present) => { elements.syncNotice.hidden = !present; });
+  }
+
+  elements.removeSyncCopy.addEventListener("click", () => {
+    elements.removeSyncCopy.disabled = true;
+    MissavSettings.removeSyncCopy((error) => {
+      elements.removeSyncCopy.disabled = false;
+      if (error) {
+        showSaveState("删除失败，请稍后重试", true);
+        return;
+      }
+      elements.syncNotice.hidden = true;
+      showSaveState("已删除账号中的旧副本");
+    });
+  });
 
   elements.enabled.addEventListener("change", () => {
     settings.enabled = elements.enabled.checked;
@@ -381,14 +366,11 @@
     persist();
   });
 
-  if (syncStorage) {
-    syncStorage.get(DEFAULT_SETTINGS, (storedSettings) => {
-      settings = sanitizeSettings(storedSettings);
-      render();
-    });
-  } else {
+  MissavSettings.load((storedSettings) => {
+    settings = storedSettings;
     render();
-  }
+    readSyncCopy();
+  });
 
   readSiteStatus();
 

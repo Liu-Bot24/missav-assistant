@@ -31,6 +31,11 @@
 
       <p id="siteStatus" class="site-status" role="status">正在识别当前页面…</p>
 
+      <section id="syncNotice" class="sync-notice" hidden>
+        <p>设置现在只保存在这台电脑上。旧版本曾把设置同步到浏览器账号，账号里还留着一份旧副本。删除后，其他设备上的旧版本会恢复默认设置。</p>
+        <button id="removeSyncCopy" type="button">删除账号中的旧副本</button>
+      </section>
+
       <section class="panel" aria-labelledby="tagTitle">
         <div class="section-heading">
           <div>
@@ -164,6 +169,7 @@
 
     <script src="label-library.js"></script>
     <script src="genre-library.js"></script>
+    <script src="settings.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

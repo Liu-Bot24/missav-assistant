@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("genre-library.js", "actress-data.js", "actress-library.js");
+importScripts("genre-library.js", "settings.js", "actress-data.js", "actress-library.js");
 
 const DATABASE_ID = "missav-default";
 const API_HOST = "https://client-rapi-missav.recombee.com";
@@ -9,6 +9,10 @@ const MAX_BATCH_SIZE = 30;
 const MAX_METADATA_CACHE_ITEMS = 5000;
 const METADATA_CACHE_KEY = "videoMetadataById";
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
+
+chrome.runtime.onInstalled?.addListener(() => {
+  MissavSettings.migrate();
+});
 
 async function signPath(path) {
   const encoder = new TextEncoder();

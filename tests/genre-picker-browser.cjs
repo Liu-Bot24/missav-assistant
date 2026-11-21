@@ -13,10 +13,14 @@ const root = path.join(__dirname, '..');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      window.saved = { genreExcludeRules: ['value:' + encodeURIComponent('ハイビジョン')] };
-      window.chrome = { storage: { sync: {
-        get(defaults, cb) { cb({ ...defaults, ...window.saved }); },
-        set(settings, cb) { window.saved = structuredClone(settings); cb(); }
+      window.saved = { settingsStorage: 'local', genreExcludeRules: ['value:' + encodeURIComponent('ハイビジョン')] };
+      window.chrome = { storage: { local: {
+        get(keys, cb) {
+          const list = Array.isArray(keys) ? keys : Object.keys(keys);
+          cb(Object.fromEntries(list.filter((key) => Object.hasOwn(window.saved, key))
+            .map((key) => [key, structuredClone(window.saved[key])])));
+        },
+        set(settings, cb) { window.saved = { ...window.saved, ...structuredClone(settings) }; cb?.(); }
       } } };
     });
     await page.goto(pathToFileURL(path.join(root, 'popup.html')).href);
