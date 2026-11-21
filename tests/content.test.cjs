@@ -5,9 +5,9 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
-const genreLibrarySource = fs.readFileSync(path.join(__dirname, "..", "genre-library.js"), "utf8");
-const HIDDEN_CLASS = "missav-content-filter-hidden";
-const SETTLING_GRID_CLASS = "missav-content-filter-grid-settling";
+const categoryLibrarySource = fs.readFileSync(path.join(__dirname, "..", "category-library.js"), "utf8");
+const HIDDEN_CLASS = "viewing-assistant-hidden";
+const SETTLING_GRID_CLASS = "viewing-assistant-grid-settling";
 
 test("性能：长列表的布局定位不会为每张卡重复枚举整个网格", async () => {
   const cards = Array.from({ length: 300 }, (_, index) => makeCard(
@@ -20,7 +20,7 @@ test("性能：长列表的布局定位不会为每张卡重复枚举整个网�
     if (selector === "div.thumbnail") gridEnumerations += 1;
     return query(selector);
   };
-  const runtime = execute(grid, { blockedPresets: ["chinese-subtitle"], genreExcludeRules: [] });
+  const runtime = execute(grid, { hiddenLabels: ["chinese-subtitle"], categoryExcludeRules: [] });
   await new Promise(setImmediate);
   const initialEnumerations = gridEnumerations;
   const added = makeCard([{ text: "中文字幕" }]);
@@ -103,7 +103,7 @@ class FakeElement {
     if (selector === 'a[rel="next"][href]') {
       return this.tagName === "A" && this.getAttribute("rel") === "next" && this.attributes.has("href");
     }
-    if (selector === "[data-missav-filter-refill]") return this.attributes.has("data-missav-filter-refill");
+    if (selector === "[data-viewing-assistant-refill]") return this.attributes.has("data-viewing-assistant-refill");
     return false;
   }
 
@@ -324,7 +324,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       local: {
         get(_keys, callback) {
           // Existing scenarios isolate label/genre behavior; cast scenarios opt in below.
-          callback({ settingsStorage: "local", genreExcludeRules: [], actressLimitEnabled: false,
+          callback({ settingsVersion: 2, categoryExcludeRules: [], actressLimitEnabled: false,
             showActressNames: false, ...storedSettings });
         }
       },
@@ -375,7 +375,8 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
       return scheduledTimeouts.length;
     }
   };
-  vm.runInNewContext(genreLibrarySource, context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "text.js"), "utf8"), context);
+  vm.runInNewContext(categoryLibrarySource, context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "metadata-client.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "label-library.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "settings.js"), "utf8"), context);
@@ -433,7 +434,7 @@ test("回归：侧栏卡片会连同封面和视频标题作为整行隐藏", as
   });
 
   execute(makePage([blocked, allowed]), {
-    genreExcludeRules: []
+    categoryExcludeRules: []
   });
   await new Promise((resolve) => setImmediate(resolve));
 
@@ -451,7 +452,7 @@ test("回归：侧栏使用不同 CSS 的可见无码徽章仍会被识别", asy
     classes: ["badge", "sidebar-badge"]
   }));
 
-  execute(makePage([blocked]), { genreExcludeRules: [] });
+  execute(makePage([blocked]), { categoryExcludeRules: [] });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(blocked.layoutItem.classList.contains(HIDDEN_CLASS), true);
@@ -467,9 +468,9 @@ test("详情页完全不处理推荐侧栏，即使保存了标签和分类规�
   const includeRule = `value:${encodeURIComponent("巨乳")}`;
 
   const runtime = execute(makePage([uncensored, ordinary]), {
-    blockedPresets: ["uncensored"],
-    genreIncludeRules: [includeRule],
-    genreExcludeRules: ["group:gender-diverse"]
+    hiddenLabels: ["uncensored"],
+    categoryIncludeRules: [includeRule],
+    categoryExcludeRules: ["group:gender-diverse"]
   }, {
     url: "https://missav.ai/dm123/sone-119",
     metadata: {
@@ -489,7 +490,7 @@ test("可只选择隐藏某一种标签", () => {
   const english = makeCard([{ text: "英文字幕" }]);
   const uncensored = makeCard([{ text: "無碼影片" }]);
   execute(makePage([chinese, english, uncensored]), {
-    blockedPresets: ["chinese-subtitle"]
+    hiddenLabels: ["chinese-subtitle"]
   });
   assert.equal(chinese.layoutItem.classList.contains(HIDDEN_CLASS), true);
   assert.equal(english.layoutItem.classList.contains(HIDDEN_CLASS), false);
@@ -500,7 +501,7 @@ test("可隐藏无标签卡片，同时保留未选中的带标签卡片", () =>
   const untagged = makeCard([]);
   const tagged = makeCard([{ text: "中文字幕" }]);
   execute(makePage([untagged, tagged]), {
-    blockedPresets: [],
+    hiddenLabels: [],
     hideUntagged: true
   });
   assert.equal(untagged.layoutItem.classList.contains(HIDDEN_CLASS), true);
@@ -514,14 +515,14 @@ test("栏目标题与导航文字都不会被当成视频卡片标签", () => {
     new FakeElement({ tagName: "SPAN", textContent: "无码影片" }),
     makeHomeSection("無碼影片", [ordinary])
   );
-  execute(root, { genreExcludeRules: [] });
+  execute(root, { categoryExcludeRules: [] });
   assert.equal(ordinary.layoutItem.classList.contains(HIDDEN_CLASS), false);
 });
 
 test("首页加载完成后会补做一次稳定扫描，识别延迟显示的标签", async () => {
   const card = makeCard([{ text: "无码影片", display: "none" }]);
   const runtime = execute(makeHomeSection("最近更新", [card]), {
-    genreExcludeRules: []
+    categoryExcludeRules: []
   }, {
     url: "https://missav.ai/dm247/cn"
   });
@@ -539,7 +540,7 @@ test("首页徽章位于 thumbnail 兄弟节点时仍会被计入筛选", async 
   const card = makeCard([]);
   card.wrapper.append(makeTag("无码影片"));
 
-  execute(makeHomeSection("随机", [card]), { genreExcludeRules: [] }, {
+  execute(makeHomeSection("随机", [card]), { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -550,7 +551,7 @@ test("首页徽章位于 thumbnail 兄弟节点时仍会被计入筛选", async 
 test("首页已有卡片后来插入外层标签时会立即重新筛选", async () => {
   const card = makeCard([]);
   const runtime = execute(makeHomeSection("推荐给你", [card]), {
-    genreExcludeRules: []
+    categoryExcludeRules: []
   }, {
     url: "https://missav.ai/dm247/cn"
   });
@@ -596,7 +597,7 @@ test("首页少于八项时载入一批，达到或超过八项立即停止", as
     }]);
   });
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -612,7 +613,7 @@ test("首页少于八项时载入一批，达到或超过八项立即停止", as
     11
   );
   assert.equal(
-    grid.children.some((item) => item.classList.contains("missav-content-filter-home-overflow")),
+    grid.children.some((item) => item.classList.contains("viewing-assistant-home-overflow")),
     false
   );
 
@@ -637,7 +638,7 @@ test("首页原本正好八项且无需隐藏时不会载入更多", async () =>
   });
   section.append(loadMore);
 
-  execute(section, { genreExcludeRules: [] }, {
+  execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -669,7 +670,7 @@ test("首页隐藏推荐占位卡不计入八个真实视频", async () => {
   });
   section.append(loadMore);
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -690,7 +691,7 @@ test("首页推荐占位卡不会把待判定状态挂到整个网格", async ()
   grid.append(new FakeElement({ tagName: "TEMPLATE" }));
 
   execute(grid, {
-    genreExcludeRules: ["group:gender-diverse"]
+    categoryExcludeRules: ["group:gender-diverse"]
   }, {
     url: "https://missav.ai/dm247/cn",
     deferMetadata: true
@@ -698,8 +699,8 @@ test("首页推荐占位卡不会把待判定状态挂到整个网格", async ()
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(grid.classList.contains(HIDDEN_CLASS), false);
-  assert.equal(grid.classList.contains("missav-content-filter-pending"), false);
-  assert.equal(placeholder.card.classList.contains("missav-content-filter-pending"), false);
+  assert.equal(grid.classList.contains("viewing-assistant-pending"), false);
+  assert.equal(placeholder.card.classList.contains("viewing-assistant-pending"), false);
 });
 
 test("首页载入更多首次尚未绑定时会解除占用并重试", async () => {
@@ -710,7 +711,7 @@ test("首页载入更多首次尚未绑定时会解除占用并重试", async ()
   let clickCount = 0;
   let runtime;
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -757,7 +758,7 @@ test("首页不足八项时会逐批载入直到达到八项", async () => {
     }]);
   });
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -797,7 +798,7 @@ test("首页载入更多被占位容器隔开时仍会为所属栏目补位", as
     }]);
   });
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -827,7 +828,7 @@ test("首页栏目补位不会跨到下一个栏目的载入更多按钮", async
   completeSection.append(otherLoadMore);
   const root = new FakeElement().append(missingSection, completeSection);
 
-  execute(root, { genreExcludeRules: [] }, {
+  execute(root, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -872,7 +873,7 @@ test("多个首页栏目共用父容器时按文档顺序关联各自载入更�
     secondClicks += 1;
   });
 
-  runtime = execute(root, { genreExcludeRules: [] }, {
+  runtime = execute(root, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -898,7 +899,7 @@ test("栏目标题与规则同名且已有八项时不会隐藏或触发补位",
   });
   section.append(loadMore);
 
-  execute(section, { genreExcludeRules: [] }, {
+  execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -933,7 +934,7 @@ test("普通首页栏目当前一批全部被过滤时仍会继续请求替补",
     }]);
   });
 
-  runtime = execute(section, { genreExcludeRules: [] }, {
+  runtime = execute(section, { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -960,7 +961,7 @@ test("动态推荐的 uncensored leak 视频在徽章显示前也会隐藏", () 
     href: "https://missav.ai/cn/sgki-085-uncensored-leak"
   });
 
-  execute(makePage([card]), { genreExcludeRules: [] }, {
+  execute(makePage([card]), { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
 
@@ -972,7 +973,7 @@ test("普通视频 ID 不会被 uncensored leak 规则误伤", () => {
     href: "https://missav.ai/cn/sgki-085"
   });
 
-  execute(makePage([card]), { genreExcludeRules: [] }, {
+  execute(makePage([card]), { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
 
@@ -983,7 +984,7 @@ test("动态推荐徽章由 display none 变为可见时会立即重新筛选", 
   const card = makeCard([]);
   const delayedBadge = makeTag("无码影片", "none");
   card.card.children[0].append(delayedBadge);
-  const runtime = execute(makePage([card]), { genreExcludeRules: [] }, {
+  const runtime = execute(makePage([card]), { categoryExcludeRules: [] }, {
     url: "https://missav.ai/dm247/cn"
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -1024,8 +1025,8 @@ test("动态插入卡片后会重新过滤", async () => {
 test("性能回归：样式和 class 变化不会重新启动整页两阶段筛选", async () => {
   const card = makeCard([], { href: "https://missav.ai/allowed-001" });
   const runtime = execute(makePage([card]), {
-    genreIncludeRules: [`value:${encodeURIComponent("素人")}`],
-    genreExcludeRules: []
+    categoryIncludeRules: [`value:${encodeURIComponent("素人")}`],
+    categoryExcludeRules: []
   }, {
     metadata: {
       "allowed-001": { genres: ["素人"], tags: [], type: "jav", duration: 7200 }
@@ -1059,7 +1060,7 @@ test("暂停过滤后会恢复之前隐藏的卡片", () => {
 test("停用的自定义标签不再产生不可见的过滤规则", () => {
   const custom = makeCard([{ text: " 4K " }]);
   execute(makePage([custom]), {
-    blockedPresets: [],
+    hiddenLabels: [],
     customLabels: ["4k"]
   });
   assert.equal(custom.layoutItem.classList.contains(HIDDEN_CLASS), false);
@@ -1254,7 +1255,7 @@ test("关闭连续滚动后清理追加项并恢复单页补足模式", async ()
 test("默认排除组合规则会隐藏命中内页类型的卡片", async () => {
   const detailUrl = "https://missav.ai/pets-071";
   const card = makeCard([], { href: detailUrl });
-  const runtime = execute(makePage([card]), { genreExcludeRules: ["group:gender-diverse"] }, {
+  const runtime = execute(makePage([card]), { categoryExcludeRules: ["group:gender-diverse"] }, {
     metadata: {
       "pets-071": {
         genres: ["女装・男の娘", "ニューハーフ"],
@@ -1277,8 +1278,8 @@ test("包含规则要求至少命中一项，排除规则具有更高优先级",
   const includeRule = `value:${encodeURIComponent("素人")}`;
 
   execute(makePage([allowed, missingInclude, excluded]), {
-    genreIncludeRules: [includeRule],
-    genreExcludeRules: ["group:gender-diverse"]
+    categoryIncludeRules: [includeRule],
+    categoryExcludeRules: ["group:gender-diverse"]
   }, {
     metadata: {
       "allowed-001": { genres: ["素人"], tags: [], type: "jav" },
@@ -1294,11 +1295,11 @@ test("包含规则要求至少命中一项，排除规则具有更高优先级",
 });
 
 test("分类服务查无此片：只有“只显示”规则时才隐藏，其余规则下照常显示且不提示重试", async () => {
-  const unverified = "missav-content-filter-unverified";
+  const unverified = "viewing-assistant-unverified";
   for (const [rules, hidden] of [
-    [{ genreIncludeRules: [], genreExcludeRules: ["group:gender-diverse"] }, false],
-    [{ genreIncludeRules: [], genreExcludeRules: [], actressLimitEnabled: true, maxActresses: 1 }, false],
-    [{ genreIncludeRules: [`value:${encodeURIComponent("素人")}`], genreExcludeRules: [] }, true]
+    [{ categoryIncludeRules: [], categoryExcludeRules: ["group:gender-diverse"] }, false],
+    [{ categoryIncludeRules: [], categoryExcludeRules: [], actressLimitEnabled: true, maxActresses: 1 }, false],
+    [{ categoryIncludeRules: [`value:${encodeURIComponent("素人")}`], categoryExcludeRules: [] }, true]
   ]) {
     const card = makeCard([], { href: "https://missav.ai/none-001" });
     execute(makePage([card]), rules, { metadata: {} });
@@ -1311,11 +1312,9 @@ test("分类服务查无此片：只有“只显示”规则时才隐藏，其�
 test("回归：必须包含四小时以上时只保留时长达到 14400 秒的卡片", async () => {
   const fourHoursPlus = makeCard([], { href: "https://missav.ai/mizd-396" });
   const twoHours = makeCard([], { href: "https://missav.ai/mida-737" });
-  const legacyDurationRule = `value:${encodeURIComponent("4小時以上")}`;
-
   execute(makePage([fourHoursPlus, twoHours]), {
-    genreIncludeRules: [legacyDurationRule],
-    genreExcludeRules: []
+    categoryIncludeRules: ["group:duration-4h-plus"],
+    categoryExcludeRules: []
   }, {
     metadata: {
       "mizd-396": { genres: ["女優ベスト・総集編"], tags: [], type: "jav", duration: 14438 },
@@ -1358,8 +1357,8 @@ test("两阶段管线先固定第一层幸存集合，第二层整批返回后�
     ])
   ]);
   const runtime = execute(current.root, {
-    genreIncludeRules: ["group:duration-4h-plus"],
-    genreExcludeRules: []
+    categoryIncludeRules: ["group:duration-4h-plus"],
+    categoryExcludeRules: []
   }, {
     url: current.url,
     pages: { [nextPageUrl]: nextPage.root },
@@ -1390,7 +1389,7 @@ test("分类请求进行中新增的可见标签卡片会同步隐藏", async ()
   });
   const grid = makePage([initial]);
   const runtime = execute(grid, {
-    genreExcludeRules: ["group:gender-diverse"]
+    categoryExcludeRules: ["group:gender-diverse"]
   }, {
     url: "https://missav.ai/dm247/cn",
     deferMetadata: true,
@@ -1420,7 +1419,7 @@ test("已被分类隐藏的卡片在后续扫描中不会短暂恢复", async ()
   });
   const grid = makePage([excluded]);
   const runtime = execute(grid, {
-    genreExcludeRules: ["group:gender-diverse"]
+    categoryExcludeRules: ["group:gender-diverse"]
   }, {
     url: "https://missav.ai/dm247/cn",
     metadata: {
@@ -1481,18 +1480,18 @@ const badgeLocales = [
   ["Hindi na-censor", "Chinese subtitle", "English subtitle"],
   ["Sem censura", "Legenda chinesa", "Legenda em inglês"]
 ];
-for (const [index, preset] of ["uncensored", "chinese-subtitle", "other-subtitle"].entries()) {
-  test(`13 种界面中的 ${preset} 标签独立识别，不混淆其余类别`, () => {
+for (const [index, kind] of ["uncensored", "chinese-subtitle", "other-subtitle"].entries()) {
+  test(`13 种界面中的 ${kind} 标签独立识别，不混淆其余类别`, () => {
     const cards = badgeLocales.flatMap((row) => row.map((text) => makeCard([{ text }])));
-    execute(makePage(cards), { blockedPresets: [preset], genreExcludeRules: [] });
+    execute(makePage(cards), { hiddenLabels: [kind], categoryExcludeRules: [] });
     cards.forEach((card, i) => assert.equal(card.wrapper.classList.contains(HIDDEN_CLASS), i % 3 === index));
   });
 }
 
-test("英文旧设置迁移到其他字幕，保留中文卡片", () => {
+test("隐藏其他字幕时保留中文字幕卡片", () => {
   const en = makeCard([{ text: "英語字幕" }]);
   const cn = makeCard([{ text: "中国語字幕" }]);
-  execute(makePage([en, cn]), { blockedPresets: ["english-subtitle"], genreExcludeRules: [] });
+  execute(makePage([en, cn]), { hiddenLabels: ["other-subtitle"], categoryExcludeRules: [] });
   assert.equal(en.wrapper.classList.contains(HIDDEN_CLASS), true);
   assert.equal(cn.wrapper.classList.contains(HIDDEN_CLASS), false);
 });
@@ -1505,15 +1504,15 @@ test("徽章结构字段识别字幕种类，否定字幕条件的无码谓词�
     // Synthetic future field: a compatibility check, not a claim that it exists on the live site.
     "item.dvd_id && item.has_korean_subtitle"
   ];
-  for (const preset of ["uncensored", "chinese-subtitle", "other-subtitle"]) {
+  for (const kind of ["uncensored", "chinese-subtitle", "other-subtitle"]) {
     const cards = conditions.map((condition) => {
       const card = makeCard([{ text: "未收录译名" }]);
       card.card.querySelector("span").parentElement.setAttribute("x-show", condition);
       return card;
     });
-    execute(makePage(cards), { blockedPresets: [preset], genreExcludeRules: [] });
+    execute(makePage(cards), { hiddenLabels: [kind], categoryExcludeRules: [] });
     cards.forEach((card, i) => assert.equal(card.wrapper.classList.contains(HIDDEN_CLASS),
-      ["other-subtitle", "chinese-subtitle", "uncensored", "other-subtitle"][i] === preset));
+      ["other-subtitle", "chinese-subtitle", "uncensored", "other-subtitle"][i] === kind));
   }
 });
 
@@ -1523,7 +1522,7 @@ test("同名标题、部分相似标签和隐藏预埋徽章都不触发标签�
   const similar = makeCard([{ text: "Not Uncensored" }]);
   const invisible = makeCard([{ text: "英語字幕", display: "none" }]);
   const cards = [title, similar, invisible];
-  execute(makePage(cards), { blockedPresets: ["uncensored", "other-subtitle"], genreExcludeRules: [] });
+  execute(makePage(cards), { hiddenLabels: ["uncensored", "other-subtitle"], categoryExcludeRules: [] });
   cards.forEach((card) => assert.equal(card.wrapper.classList.contains(HIDDEN_CLASS), false));
 });
 
@@ -1536,7 +1535,7 @@ test("非中英文载入更多按网站动作识别，不误点其他操作", as
     let clicks = 0;
     control.addEventListener("click", () => { clicks += 1; });
     section.append(control);
-    execute(section, { genreExcludeRules: [] }, { url: "https://missav.ai/dm285/ja" });
+    execute(section, { categoryExcludeRules: [] }, { url: "https://missav.ai/dm285/ja" });
     await new Promise(setImmediate);
     assert.equal(clicks, expected, `${text}: ${action}`);
   }
@@ -1545,7 +1544,7 @@ test("非中英文载入更多按网站动作识别，不误点其他操作", as
 test("空白徽章仍属于无标签，真正的可见徽章不属于无标签", () => {
   const blank = makeCard([{ text: "  " }]);
   const tagged = makeCard([{ text: "English subtitle" }]);
-  execute(makePage([blank, tagged]), { hideUntagged: true, blockedPresets: [], genreExcludeRules: [] });
+  execute(makePage([blank, tagged]), { hideUntagged: true, hiddenLabels: [], categoryExcludeRules: [] });
   assert.equal(blank.wrapper.classList.contains(HIDDEN_CLASS), true);
   assert.equal(tagged.wrapper.classList.contains(HIDDEN_CLASS), false);
 });
@@ -1556,7 +1555,7 @@ test("关闭首页生效覆盖全部语言首页，但不影响演员、分类�
   for (const [paths, hidden] of [[homes, false], [lists, true]]) {
     for (const route of paths) {
       const card = makeCard([{ text: 'Uncensored' }]);
-      const runtime = execute(makeHomeSection('栏目', [card]), { homepageEnabled: false, genreExcludeRules: [] }, { url: `https://missav.ai${route}` });
+      const runtime = execute(makeHomeSection('栏目', [card]), { homepageEnabled: false, categoryExcludeRules: [] }, { url: `https://missav.ai${route}` });
       await new Promise(setImmediate);
       assert.equal(card.wrapper.classList.contains(HIDDEN_CLASS), hidden, route);
       assert.equal(runtime.metadataMessages.length, 0);
@@ -1580,7 +1579,7 @@ test("首页初始关闭时不查分类、不补位、不接管连续滚动，�
   assert.equal(runtime.intersectionObserver, undefined);
   assert.equal(clicks, 0);
   assert.equal(section.children[1].classList.contains(SETTLING_GRID_CLASS), false);
-  runtime.changeSettings({ homepageEnabled: { newValue: true }, genreExcludeRules: { newValue: [] } });
+  runtime.changeSettings({ homepageEnabled: { newValue: true }, categoryExcludeRules: { newValue: [] } });
   const added = makeCard([{ text: '无码影片' }]);
   section.children[1].append(added.wrapper);
   runtime.observer.callback([{ type: 'childList', target: section.children[1], addedNodes: [added.wrapper] }]);
@@ -1590,7 +1589,7 @@ test("首页初始关闭时不查分类、不补位、不接管连续滚动，�
 test("关闭首页会立即恢复待判定卡片，旧分类响应不得重新隐藏", async () => {
   const card = makeCard([], { href: 'https://missav.ai/sample-101' });
   const section = makeHomeSection('栏目', [card]);
-  const runtime = execute(section, { genreExcludeRules: ['value:blocked'] }, {
+  const runtime = execute(section, { categoryExcludeRules: ['value:blocked'] }, {
     url: 'https://missav.ai/cn', deferMetadata: true,
     metadata: { 'sample-101': { genres: ['blocked'] } }
   });
@@ -1616,13 +1615,13 @@ test("关闭首页解除补位遮罩，旧计时器及后到卡片不再筛选�
   let clicks = 0;
   control.addEventListener('click', () => { clicks += 1; });
   section.append(control);
-  const runtime = execute(section, { genreExcludeRules: [] }, { url: 'https://missav.ai/cn' });
+  const runtime = execute(section, { categoryExcludeRules: [] }, { url: 'https://missav.ai/cn' });
   await new Promise(setImmediate);
   assert.equal(grid.classList.contains(SETTLING_GRID_CLASS), true);
   assert.equal(clicks, 1);
   runtime.changeSettings({ homepageEnabled: { newValue: false } });
   assert.equal(grid.classList.contains(SETTLING_GRID_CLASS), false);
-  assert.equal(control.classList.contains('missav-content-filter-control-busy'), false);
+  assert.equal(control.classList.contains('viewing-assistant-control-busy'), false);
   cards.forEach(card => assert.equal(card.wrapper.classList.contains(HIDDEN_CLASS), false));
   const late = makeCard([{ text: '无码影片' }]);
   grid.append(late.wrapper);
@@ -1637,7 +1636,7 @@ test("关闭首页解除补位遮罩，旧计时器及后到卡片不再筛选�
 test("分页补位不跟随指向外站的下一页链接", async () => {
   const cards = [makeCard([{ text: "中文字幕" }]), makeCard([])];
   const page = makePaginatedPage(cards, "https://missav.ai/cn/new", "https://other.test/cn/new?page=2");
-  const runtime = execute(page.root, { blockedPresets: ["chinese-subtitle"], genreExcludeRules: [] }, { url: page.url });
+  const runtime = execute(page.root, { hiddenLabels: ["chinese-subtitle"], categoryExcludeRules: [] }, { url: page.url });
   await new Promise(setImmediate);
   assert.equal(cards[0].wrapper.classList.contains(HIDDEN_CLASS), true);
   assert.equal(cards[1].wrapper.classList.contains(HIDDEN_CLASS), false);

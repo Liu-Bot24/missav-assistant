@@ -1,8 +1,8 @@
 (() => {
   "use strict";
 
-  const DEFAULT_SETTINGS = MissavSettings.DEFAULTS;
-  const sanitizeSettings = MissavSettings.sanitize;
+  const DEFAULT_SETTINGS = SettingsStore.DEFAULTS;
+  const sanitizeSettings = SettingsStore.sanitize;
   let settings = sanitizeSettings(DEFAULT_SETTINGS);
   let discoveredCategories = [];
   let siteStatus = null;
@@ -11,7 +11,7 @@
   // The settings before the last reset, while it can still be undone.
   let undoSettings = null;
   let undoTimer;
-  let openGenrePicker = null;
+  let openCategoryPicker = null;
   const localStorageApi = globalThis.chrome?.storage?.local;
 
   const elements = {
@@ -23,17 +23,17 @@
     maxActresses: document.querySelector("#maxActresses"),
     showActressNames: document.querySelector("#showActressNames"),
     actressExplainer: document.querySelector("#actressExplainer"),
-    presetInputs: [...document.querySelectorAll('input[name="preset"]')],
-    genreIncludeField: document.querySelector("#genreIncludeField"),
-    genreIncludeSearch: document.querySelector("#genreIncludeSearch"),
-    genreIncludeSuggestions: document.querySelector("#genreIncludeSuggestions"),
-    genreExcludeField: document.querySelector("#genreExcludeField"),
-    genreExcludeSearch: document.querySelector("#genreExcludeSearch"),
-    genreExcludeSuggestions: document.querySelector("#genreExcludeSuggestions"),
-    genreCount: document.querySelector("#genreCount"),
+    labelInputs: [...document.querySelectorAll('input[name="hiddenLabel"]')],
+    categoryIncludeField: document.querySelector("#categoryIncludeField"),
+    categoryIncludeSearch: document.querySelector("#categoryIncludeSearch"),
+    categoryIncludeSuggestions: document.querySelector("#categoryIncludeSuggestions"),
+    categoryExcludeField: document.querySelector("#categoryExcludeField"),
+    categoryExcludeSearch: document.querySelector("#categoryExcludeSearch"),
+    categoryExcludeSuggestions: document.querySelector("#categoryExcludeSuggestions"),
+    categoryCount: document.querySelector("#categoryCount"),
     ruleSummary: document.querySelector("#ruleSummary"),
     siteStatus: document.querySelector("#siteStatus"),
-    genreExplainer: document.querySelector("#genreExplainer"),
+    categoryExplainer: document.querySelector("#categoryExplainer"),
     statusBadge: document.querySelector("#statusBadge"),
     saveState: document.querySelector("#saveState"),
     resetButton: document.querySelector("#resetButton"),
@@ -46,49 +46,47 @@
     return counts && typeof counts === "object" && !Array.isArray(counts) ? Object.keys(counts) : [];
   }
 
-  function normalizeForComparison(value) {
-    return String(value).normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
-  }
+  const normalizeForComparison = TextKey.normalize;
 
-  function addGenreRule(rule, mode) {
-    settings.genreIncludeRules = settings.genreIncludeRules.filter((item) => item !== rule);
-    settings.genreExcludeRules = settings.genreExcludeRules.filter((item) => item !== rule);
+  function addCategoryRule(rule, mode) {
+    settings.categoryIncludeRules = settings.categoryIncludeRules.filter((item) => item !== rule);
+    settings.categoryExcludeRules = settings.categoryExcludeRules.filter((item) => item !== rule);
 
-    if (mode === "include") settings.genreIncludeRules.push(rule);
-    if (mode === "exclude") settings.genreExcludeRules.push(rule);
+    if (mode === "include") settings.categoryIncludeRules.push(rule);
+    if (mode === "exclude") settings.categoryExcludeRules.push(rule);
     persist();
   }
 
-  function removeGenreRule(rule, mode) {
-    const key = mode === "include" ? "genreIncludeRules" : "genreExcludeRules";
+  function removeCategoryRule(rule, mode) {
+    const key = mode === "include" ? "categoryIncludeRules" : "categoryExcludeRules";
     settings[key] = settings[key].filter((item) => item !== rule);
     persist();
   }
 
-  function genrePickerElements(mode) {
+  function categoryPickerElements(mode) {
     if (mode === "include") {
       return {
-        field: elements.genreIncludeField,
-        input: elements.genreIncludeSearch,
-        suggestions: elements.genreIncludeSuggestions,
-        rules: settings.genreIncludeRules
+        field: elements.categoryIncludeField,
+        input: elements.categoryIncludeSearch,
+        suggestions: elements.categoryIncludeSuggestions,
+        rules: settings.categoryIncludeRules
       };
     }
     return {
-      field: elements.genreExcludeField,
-      input: elements.genreExcludeSearch,
-      suggestions: elements.genreExcludeSuggestions,
-      rules: settings.genreExcludeRules
+      field: elements.categoryExcludeField,
+      input: elements.categoryExcludeSearch,
+      suggestions: elements.categoryExcludeSuggestions,
+      rules: settings.categoryExcludeRules
     };
   }
 
   function labelForRule(rule, options) {
     return options.find((option) => option.rule === rule)?.label ??
-      MissavGenreLibrary.decodeValueRule(rule) ?? rule;
+      CategoryLibrary.decodeValueRule(rule) ?? rule;
   }
 
-  function matchingGenreOptions(mode, options) {
-    const picker = genrePickerElements(mode);
+  function matchingCategoryOptions(mode, options) {
+    const picker = categoryPickerElements(mode);
     const query = normalizeForComparison(picker.input.value);
     return options.filter((option) =>
       !picker.rules.includes(option.rule) &&
@@ -97,20 +95,20 @@
     );
   }
 
-  function renderSelectedGenreRules(mode, options) {
-    const picker = genrePickerElements(mode);
-    for (const chip of picker.field.querySelectorAll(".selected-genre-chip")) chip.remove();
+  function renderSelectedCategoryRules(mode, options) {
+    const picker = categoryPickerElements(mode);
+    for (const chip of picker.field.querySelectorAll(".selected-category-chip")) chip.remove();
 
     for (const rule of picker.rules) {
       const chip = document.createElement("span");
-      chip.className = `selected-genre-chip ${mode}`;
+      chip.className = `selected-category-chip ${mode}`;
       chip.append(document.createTextNode(labelForRule(rule, options)));
 
       const removeButton = document.createElement("button");
       removeButton.type = "button";
       removeButton.textContent = "×";
       removeButton.setAttribute("aria-label", `移除${mode === "include" ? "只显示" : "隐藏"}分类：${labelForRule(rule, options)}`);
-      removeButton.addEventListener("click", () => removeGenreRule(rule, mode));
+      removeButton.addEventListener("click", () => removeCategoryRule(rule, mode));
       chip.append(removeButton);
       picker.field.insertBefore(chip, picker.input);
     }
@@ -120,13 +118,13 @@
       : "搜索并添加分类…";
   }
 
-  function renderGenreSuggestions(mode, options) {
-    const picker = genrePickerElements(mode);
-    const matches = matchingGenreOptions(mode, options);
-    picker.field.closest(".genre-picker").classList.toggle("is-open", openGenrePicker === mode);
+  function renderCategorySuggestions(mode, options) {
+    const picker = categoryPickerElements(mode);
+    const matches = matchingCategoryOptions(mode, options);
+    picker.field.closest(".category-picker").classList.toggle("is-open", openCategoryPicker === mode);
     picker.suggestions.replaceChildren();
 
-    if (openGenrePicker !== mode) {
+    if (openCategoryPicker !== mode) {
       picker.suggestions.hidden = true;
       picker.input.setAttribute("aria-expanded", "false");
       return;
@@ -134,14 +132,14 @@
 
     if (matches.length === 0) {
       const empty = document.createElement("p");
-      empty.className = "genre-suggestion-empty";
+      empty.className = "category-suggestion-empty";
       empty.textContent = "没有匹配的分类";
       picker.suggestions.append(empty);
     } else {
       for (const option of matches) {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = `genre-suggestion${option.kind === "group" ? " is-group" : ""}`;
+        button.className = `category-suggestion${option.kind === "group" ? " is-group" : ""}`;
         button.setAttribute("role", "option");
 
         const copy = document.createElement("span");
@@ -152,15 +150,15 @@
         copy.append(label, description);
 
         const addMark = document.createElement("span");
-        addMark.className = "genre-add-mark";
+        addMark.className = "category-add-mark";
         addMark.textContent = "+";
         addMark.setAttribute("aria-hidden", "true");
         button.append(copy, addMark);
         button.addEventListener("mousedown", (event) => event.preventDefault());
         button.addEventListener("click", () => {
           picker.input.value = "";
-          openGenrePicker = null;
-          addGenreRule(option.rule, mode);
+          openCategoryPicker = null;
+          addCategoryRule(option.rule, mode);
           picker.input.blur();
         });
         picker.suggestions.append(button);
@@ -171,12 +169,12 @@
     picker.input.setAttribute("aria-expanded", "true");
   }
 
-  function renderGenrePickers() {
-    const options = MissavGenreLibrary.options(discoveredCategories);
-    elements.genreCount.textContent = `${options.length} 类 · 已缓存 ${metadataCacheCount}`;
+  function renderCategoryPickers() {
+    const options = CategoryLibrary.options(discoveredCategories);
+    elements.categoryCount.textContent = `${options.length} 类 · 已缓存 ${metadataCacheCount}`;
     for (const mode of ["include", "exclude"]) {
-      renderSelectedGenreRules(mode, options);
-      renderGenreSuggestions(mode, options);
+      renderSelectedCategoryRules(mode, options);
+      renderCategorySuggestions(mode, options);
     }
   }
 
@@ -190,24 +188,24 @@
     elements.maxActresses.disabled = !settings.actressLimitEnabled;
     elements.showActressNames.checked = settings.showActressNames;
 
-    for (const input of elements.presetInputs) {
-      input.checked = settings.blockedPresets.includes(input.value);
+    for (const input of elements.labelInputs) {
+      input.checked = settings.hiddenLabels.includes(input.value);
     }
 
     elements.statusBadge.textContent = settings.enabled ? "已开启" : "已暂停";
     elements.statusBadge.classList.toggle("paused", !settings.enabled);
 
     const ruleCount =
-      settings.blockedPresets.length +
-      settings.genreIncludeRules.length +
-      settings.genreExcludeRules.length +
+      settings.hiddenLabels.length +
+      settings.categoryIncludeRules.length +
+      settings.categoryExcludeRules.length +
       (settings.hideUntagged ? 1 : 0) + (settings.actressLimitEnabled ? 1 : 0);
     elements.ruleSummary.textContent = settings.enabled
       ? `当前启用 ${ruleCount} 条规则`
       : `已保留 ${ruleCount} 条规则，重新开启后生效`;
 
     renderSiteStatus();
-    renderGenrePickers();
+    renderCategoryPickers();
   }
 
   function renderSiteStatus() {
@@ -223,14 +221,14 @@
     }
     elements.siteStatus.textContent = message;
     const basicOnly = siteStatus?.compatible && !siteStatus.metadata;
-    elements.genreExplainer.textContent = basicOnly
+    elements.categoryExplainer.textContent = basicOnly
       ? "此站尚未适配分类数据，以下条件仅在支持分类的网站生效。"
       : "按视频的内页分类筛选，隐藏条件优先。";
     elements.actressExplainer.textContent = basicOnly
       ? "此站尚未适配女优数据，以下设置在支持的网站生效。"
       : "同一演员的不同名字合并计数。";
-    if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.blockedPresets.length +
-      settings.genreIncludeRules.length + settings.genreExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
+    if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.hiddenLabels.length +
+      settings.categoryIncludeRules.length + settings.categoryExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
       (settings.actressLimitEnabled ? 1 : 0)} 条规则`;
   }
 
@@ -265,19 +263,19 @@
     if (!keepUndo) endUndo();
     settings = sanitizeSettings(settings);
     render();
-    MissavSettings.save(settings, (error) => {
+    SettingsStore.save(settings, (error) => {
       if (error) showSaveState("保存失败，请再改一次", true);
       else showSaveState(savedMessage, keepUndo);
     });
   }
 
   function readSyncCopy() {
-    MissavSettings.hasSyncCopy((present) => { elements.syncNotice.hidden = !present; });
+    SettingsStore.hasSyncCopy((present) => { elements.syncNotice.hidden = !present; });
   }
 
   elements.removeSyncCopy.addEventListener("click", () => {
     elements.removeSyncCopy.disabled = true;
-    MissavSettings.removeSyncCopy((error) => {
+    SettingsStore.removeSyncCopy((error) => {
       elements.removeSyncCopy.disabled = false;
       if (error) {
         showSaveState("删除失败，请稍后重试", true);
@@ -328,9 +326,9 @@
     persist();
   });
 
-  for (const input of elements.presetInputs) {
+  for (const input of elements.labelInputs) {
     input.addEventListener("change", () => {
-      settings.blockedPresets = elements.presetInputs
+      settings.hiddenLabels = elements.labelInputs
         .filter((item) => item.checked)
         .map((item) => item.value);
       persist();
@@ -338,37 +336,37 @@
   }
 
   for (const mode of ["include", "exclude"]) {
-    const picker = genrePickerElements(mode);
+    const picker = categoryPickerElements(mode);
     picker.input.addEventListener("focus", () => {
-      openGenrePicker = mode;
-      renderGenrePickers();
+      openCategoryPicker = mode;
+      renderCategoryPickers();
     });
     picker.input.addEventListener("input", () => {
-      openGenrePicker = mode;
-      renderGenrePickers();
+      openCategoryPicker = mode;
+      renderCategoryPickers();
     });
     picker.input.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
-        openGenrePicker = null;
-        renderGenrePickers();
+        openCategoryPicker = null;
+        renderCategoryPickers();
         picker.input.blur();
         return;
       }
       if (event.key !== "Enter") return;
-      const first = matchingGenreOptions(mode, MissavGenreLibrary.options(discoveredCategories))[0];
+      const first = matchingCategoryOptions(mode, CategoryLibrary.options(discoveredCategories))[0];
       if (!first) return;
       event.preventDefault();
       picker.input.value = "";
-      openGenrePicker = null;
-      addGenreRule(first.rule, mode);
+      openCategoryPicker = null;
+      addCategoryRule(first.rule, mode);
       picker.input.blur();
     });
   }
 
   document.addEventListener("mousedown", (event) => {
-    if (event.target.closest(".genre-picker")) return;
-    openGenrePicker = null;
-    renderGenrePickers();
+    if (event.target.closest(".category-picker")) return;
+    openCategoryPicker = null;
+    renderCategoryPickers();
   });
 
   elements.resetButton.addEventListener("click", () => {
@@ -380,9 +378,9 @@
     const previous = structuredClone(settings);
     settings = {
       ...DEFAULT_SETTINGS,
-      blockedPresets: [...DEFAULT_SETTINGS.blockedPresets],
-      genreIncludeRules: [],
-      genreExcludeRules: [...DEFAULT_SETTINGS.genreExcludeRules]
+      hiddenLabels: [...DEFAULT_SETTINGS.hiddenLabels],
+      categoryIncludeRules: [],
+      categoryExcludeRules: [...DEFAULT_SETTINGS.categoryExcludeRules]
     };
     persist("已恢复默认设置", true);
     undoSettings = previous;
@@ -393,7 +391,7 @@
     }, 10000);
   });
 
-  MissavSettings.load((storedSettings) => {
+  SettingsStore.load((storedSettings) => {
     settings = storedSettings;
     render();
     readSyncCopy();
@@ -407,7 +405,7 @@
       metadataCacheCount = Number.isFinite(Number(stored.metadataCacheCount))
         ? Number(stored.metadataCacheCount)
         : 0;
-      renderGenrePickers();
+      renderCategoryPickers();
     });
   }
 
@@ -422,6 +420,6 @@
         : 0;
     }
     if (!changes.discoveredCategories && !changes.metadataCacheCount) return;
-    renderGenrePickers();
+    renderCategoryPickers();
   });
 })();

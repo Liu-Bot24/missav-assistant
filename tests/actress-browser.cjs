@@ -33,8 +33,8 @@ nav{margin-bottom:18px}nav a{color:#cbd5e1;margin-right:12px}
 <main><div class="grid">${ids.map(id => `<div class="card" data-id="${id}"><div class="thumbnail aspect-w-16 aspect-h-9"><a href="/cn/${id}" aria-label="Fixture ${id}"></a><span class="bottom-1 left-1">中文字幕</span></div><div class="title">测试卡片 ${id}</div></div>`).join('')}</div>
 ${next ? '<a rel="next" href="?page=2">下一页</a>' : ''}</main></body></html>`;
 const visible = (page, id) => page.locator(`[data-id="${id}"]`).evaluate(el => getComputedStyle(el).display !== 'none');
-const waitSettled = page => page.waitForFunction(() => !document.querySelector('.missav-content-filter-pending') &&
-  !!document.querySelector('.missav-actress-names'));
+const waitSettled = page => page.waitForFunction(() => !document.querySelector('.viewing-assistant-pending') &&
+  !!document.querySelector('.viewing-assistant-names'));
 
 (async () => {
   const profile = fs.mkdtempSync(path.join(out, 'profile-'));
@@ -93,7 +93,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
         }] } }))), { status: 200, headers: { 'Content-Type': 'application/json' } });
       };
       await chrome.storage.local.set({ enabled: true, homepageEnabled: true,
-        blockedPresets: [], genreIncludeRules: [], genreExcludeRules: [],
+        hiddenLabels: [], categoryIncludeRules: [], categoryExcludeRules: [],
         actressLimitEnabled: true, maxActresses: 3, showActressNames: true, infiniteScroll: false });
       await chrome.storage.local.set({
         'md:single-001': { genres: [], tags: [], duration: 7200, type: 'jav' }
@@ -109,19 +109,19 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     assert.equal(await visible(page, 'four-001'), false, 'four people exceed the default limit');
     assert.equal(await visible(page, 'unknown-001'), true, 'unknown aliases cannot prove four people');
     assert.equal(await visible(page, 'empty-001'), false, 'missing cast data cannot count as passing an enabled actress filter');
-    assert.equal(await page.locator('[data-id="empty-001"]').evaluate(el => el.classList.contains('missav-content-filter-unverified')), true);
-    assert.equal(await page.locator('[data-id="single-001"] .missav-actress-names').textContent(), '田中柠檬');
-    assert.equal(await page.locator('[data-id="empty-001"] .missav-actress-names').count(), 0);
+    assert.equal(await page.locator('[data-id="empty-001"]').evaluate(el => el.classList.contains('viewing-assistant-unverified')), true);
+    assert.equal(await page.locator('[data-id="single-001"] .viewing-assistant-names').textContent(), '田中柠檬');
+    assert.equal(await page.locator('[data-id="empty-001"] .viewing-assistant-names').count(), 0);
     assert.equal(await worker.evaluate(() => fixtureCalls.length), 1, 'one batch also refreshes old cache');
     assert.equal(await worker.evaluate(() => fixtureCalls[0].requests.every(r => r.params.includedProperties.includes('actresses'))), true);
     console.log('PASS batch lookup, old cache upgrade, aliases and strict person threshold');
 
     await settings({ actressLimitEnabled: false });
-    await page.waitForFunction(() => !document.querySelector('[data-id="four-001"]').classList.contains('missav-content-filter-hidden'));
-    assert.equal(await page.locator('[data-id="four-001"] .missav-actress-names').textContent(), '松本一香、深田咏美、坂道美琉…');
+    await page.waitForFunction(() => !document.querySelector('[data-id="four-001"]').classList.contains('viewing-assistant-hidden'));
+    assert.equal(await page.locator('[data-id="four-001"] .viewing-assistant-names').textContent(), '松本一香、深田咏美、坂道美琉…');
     for (const width of [1440, 900, 360]) {
       await page.setViewportSize({ width, height: 900 });
-      const results = await page.locator('.missav-actress-names').evaluateAll(overlays => overlays.map(el => {
+      const results = await page.locator('.viewing-assistant-names').evaluateAll(overlays => overlays.map(el => {
         const host = el.parentElement.getBoundingClientRect();
         const box = el.getBoundingClientRect();
         const badge = el.parentElement.querySelector('.bottom-1');
@@ -132,18 +132,18 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
           ellipsis: getComputedStyle(el).textOverflow === 'ellipsis' && getComputedStyle(el).overflow === 'hidden' };
       }));
       assert.ok(results.length > 0 && results.every(result => result.inside && result.oneLine && result.largeEnough && result.ellipsis), JSON.stringify({ width, results }));
-      const long = page.locator('[data-id="long-001"] .missav-actress-names');
+      const long = page.locator('[data-id="long-001"] .viewing-assistant-names');
       assert.equal(await long.evaluate(el => el.scrollWidth > el.clientWidth), true, 'long text is actually clipped');
       await page.screenshot({ path: path.join(out, `names-${width}.png`), fullPage: true });
     }
     await settings({ showActressNames: false });
-    await page.waitForFunction(() => !document.querySelector('.missav-actress-names'));
+    await page.waitForFunction(() => !document.querySelector('.viewing-assistant-names'));
     assert.equal(await visible(page, 'four-001'), true);
     await settings({ actressLimitEnabled: true, maxActresses: 4 });
     await page.waitForTimeout(100);
     assert.equal(await visible(page, 'four-001'), true);
     await settings({ maxActresses: 2 });
-    await page.waitForFunction(() => document.querySelector('[data-id="three-001"]').classList.contains('missav-content-filter-hidden'));
+    await page.waitForFunction(() => document.querySelector('[data-id="three-001"]').classList.contains('viewing-assistant-hidden'));
     assert.equal(await visible(page, 'single-001'), true);
     assert.equal(await worker.evaluate(() => fixtureCalls.length), 1, 'settings changes reuse resolved identities');
     console.log('PASS independent toggles, editable limit, Chinese names, top-three and bounded double-size text');
@@ -152,8 +152,8 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     const refill = await context.newPage();
     refill.on('pageerror', e => errors.push(e.message));
     await refill.goto('https://missav.ai/cn/refill');
-    await refill.waitForSelector('[data-missav-filter-refill] .missav-actress-names');
-    assert.equal(await refill.locator('[data-missav-filter-refill] .missav-actress-names').textContent(), '松本一香');
+    await refill.waitForSelector('[data-viewing-assistant-refill] .viewing-assistant-names');
+    assert.equal(await refill.locator('[data-viewing-assistant-refill] .viewing-assistant-names').textContent(), '松本一香');
     assert.equal(await visible(refill, 'four-001'), false);
     await refill.close();
     console.log('PASS filtered page refills and imported covers receive actor names');
@@ -162,9 +162,9 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     const infinite = await context.newPage();
     infinite.on('pageerror', e => errors.push(e.message));
     await infinite.goto('https://missav.ai/cn/refill');
-    await infinite.waitForSelector('[data-missav-filter-refill] .missav-actress-names');
-    await infinite.waitForFunction(() => document.querySelector('.missav-content-filter-sentinel')?.classList.contains('is-complete'));
-    assert.equal(await infinite.locator('[data-missav-filter-refill] .missav-actress-names').textContent(), '松本一香');
+    await infinite.waitForSelector('[data-viewing-assistant-refill] .viewing-assistant-names');
+    await infinite.waitForFunction(() => document.querySelector('.viewing-assistant-sentinel')?.classList.contains('is-complete'));
+    assert.equal(await infinite.locator('[data-viewing-assistant-refill] .viewing-assistant-names').textContent(), '松本一香');
     await infinite.close();
     await settings({ infiniteScroll: false });
     const home = await context.newPage();
@@ -173,7 +173,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     await waitSettled(home);
     assert.equal(await visible(home, 'four-001'), false);
     await settings({ homepageEnabled: false });
-    await home.waitForFunction(() => !document.querySelector('.missav-actress-names') && !document.querySelector('.missav-content-filter-hidden'));
+    await home.waitForFunction(() => !document.querySelector('.viewing-assistant-names') && !document.querySelector('.viewing-assistant-hidden'));
     await home.close();
     await settings({ homepageEnabled: true });
     console.log('PASS actor names during infinite scrolling and homepage switch cleanup');
@@ -181,8 +181,8 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     const recovery = await context.newPage();
     await recovery.goto('https://missav.ai/cn/recovery');
     await recovery.waitForFunction(() =>
-      document.querySelector('[data-id="recover-single-001"] .missav-actress-names')?.textContent === '皆月光' &&
-      document.querySelector('[data-id="recover-multi-001"] .missav-actress-names')?.textContent === '皆月光、若月もあ',
+      document.querySelector('[data-id="recover-single-001"] .viewing-assistant-names')?.textContent === '皆月光' &&
+      document.querySelector('[data-id="recover-multi-001"] .viewing-assistant-names')?.textContent === '皆月光、若月もあ',
       null, { timeout: 8000 });
     assert.equal(await worker.evaluate(() => recoveryAttempts), 2, 'transient failure retries once and then stops');
     await recovery.close();
@@ -197,20 +197,20 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
       }, mode);
       const retryPage = await context.newPage();
       await retryPage.goto('https://missav.ai/cn/recovery');
-      await retryPage.waitForFunction(() => !document.querySelector('.missav-content-filter-pending'), null, { timeout: 8000 });
+      await retryPage.waitForFunction(() => !document.querySelector('.viewing-assistant-pending'), null, { timeout: 8000 });
       if (mode === 'partial') {
-        assert.equal(await retryPage.locator('[data-id="recover-multi-001"] .missav-actress-names').textContent(), '皆月光、若月もあ');
+        assert.equal(await retryPage.locator('[data-id="recover-multi-001"] .viewing-assistant-names').textContent(), '皆月光、若月もあ');
         assert.deepEqual(await worker.evaluate(start => fixtureCalls.slice(start).map(call => call.requests.map(r => r.params.searchQuery)), start),
           [['recover-single-001', 'recover-multi-001', 'absent-001'], ['recover-multi-001']],
           'only the failed item is retried; successful and explicit missing records are not');
       } else {
         assert.equal(await worker.evaluate(() => recoveryAttempts), 3, 'persistent errors have a retry limit');
         assert.equal(await visible(retryPage, 'recover-single-001'), false, 'failed lookup stays outside verified filter results');
-        assert.equal(await retryPage.locator('.missav-content-filter-retry').count(), 1, 'failed lookup has an explicit retry control');
-        assert.equal(await retryPage.locator('[data-id="recover-single-001"] .missav-actress-names').count(), 0, 'no invented name');
+        assert.equal(await retryPage.locator('.viewing-assistant-retry').count(), 1, 'failed lookup has an explicit retry control');
+        assert.equal(await retryPage.locator('[data-id="recover-single-001"] .viewing-assistant-names').count(), 0, 'no invented name');
         await worker.evaluate(() => { recoveryMode = 'healthy'; });
         await retryPage.evaluate(() => window.dispatchEvent(new Event('online')));
-        await retryPage.waitForSelector('[data-id="recover-single-001"] .missav-actress-names');
+        await retryPage.waitForSelector('[data-id="recover-single-001"] .viewing-assistant-names');
         assert.equal(await worker.evaluate(() => recoveryAttempts), 4, 'network recovery retries exhausted failures');
       }
       await retryPage.close();
@@ -233,10 +233,10 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     await settings({ showActressNames: false });
     await worker.evaluate(() => { pendingFixture(); pendingFixture = null; });
     await late.waitForTimeout(150);
-    assert.equal(await late.locator('.missav-actress-names').count(), 0, 'late response cannot undo display switch');
+    assert.equal(await late.locator('.viewing-assistant-names').count(), 0, 'late response cannot undo display switch');
     await late.close();
     await settings({ enabled: false });
-    await page.waitForFunction(() => !document.querySelector('.missav-content-filter-hidden') && !document.querySelector('.missav-actress-names'));
+    await page.waitForFunction(() => !document.querySelector('.viewing-assistant-hidden') && !document.querySelector('.viewing-assistant-names'));
     assert.deepEqual(errors, []);
     assert.deepEqual(unexpectedRequests, [], 'no detail-page or external mapping requests at runtime');
     console.log('PASS display-only loading, stale response cancellation and global reset');

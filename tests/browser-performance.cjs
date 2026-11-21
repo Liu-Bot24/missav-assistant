@@ -6,7 +6,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const root = path.join(__dirname, "..");
-const library = fs.readFileSync(path.join(root, "genre-library.js"), "utf8");
+const library = fs.readFileSync(path.join(root, "category-library.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "content.css"), "utf8");
 const current = fs.readFileSync(path.join(root, "content.js"), "utf8");
 // An optional ref enables comparison; the default check needs no old history.
@@ -53,10 +53,10 @@ async function install(page, source, count, home = false, slow = false) {
       } },
       storage: (() => {
         const stored = { actressLimitEnabled: false, showActressNames: false,
-          blockedPresets: ["chinese-subtitle"], genreExcludeRules: home ? ["value:blocked"] : [] };
+          hiddenLabels: ["chinese-subtitle"], categoryExcludeRules: home ? ["value:blocked"] : [] };
         // Current builds read the local area; an optional baseline build may read sync.
         return {
-          local: { get(_keys, callback) { callback({ settingsStorage: "local", ...stored }); } },
+          local: { get(_keys, callback) { callback({ settingsVersion: 2, ...stored }); } },
           sync: { get(defaults, callback) { callback({ ...defaults, ...stored }); } },
           onChanged: { addListener(listener) {
             window.changeSettings = (changes) => { listener(changes, "local"); listener(changes, "sync"); };
@@ -77,6 +77,7 @@ async function install(page, source, count, home = false, slow = false) {
     });
   }, { count, home, slow });
   if (source === baseline) await page.evaluate(() => document.documentElement.setAttribute("data-viewing-assistant", ""));
+  await page.addScriptTag({ path: path.join(root, "text.js") });
   await page.addScriptTag({ path: path.join(root, "site-library.js") });
   await page.addScriptTag({ path: path.join(root, "label-library.js") });
   await page.addScriptTag({ path: path.join(root, "metadata-client.js") });
@@ -114,7 +115,7 @@ async function measure(browser, source, count) {
       grid.append(makeCard(99999, true));
       await new Promise((resolve) => setTimeout(resolve, 0));
       return { ms: performance.now() - start, gridEnumerations: metrics.gridEnumerations,
-        hidden: document.querySelectorAll(".missav-content-filter-hidden").length,
+        hidden: document.querySelectorAll(".viewing-assistant-hidden").length,
         addedHidden: getComputedStyle(grid.lastElementChild).display === "none" };
     });
     assert.equal(insertion.hidden, count / 2 + 1);
@@ -152,8 +153,8 @@ async function measure(browser, source, count) {
     try {
       await install(home, process.argv.includes("baseline") ? baseline : current, 12, true);
       await home.waitForFunction(() => metrics.clicks > 0 &&
-        !grid.classList.contains("missav-content-filter-grid-settling") &&
-        !document.querySelector(".missav-content-filter-pending") && metrics.visibleSequences.length > 0,
+        !grid.classList.contains("viewing-assistant-grid-settling") &&
+        !document.querySelector(".viewing-assistant-pending") && metrics.visibleSequences.length > 0,
         null, { timeout: 12000 });
       const state = await home.evaluate(() => ({
         clicks: metrics.clicks, messages: metrics.messages, blockedPeak: metrics.blockedPeak,
@@ -174,8 +175,8 @@ async function measure(browser, source, count) {
         grid.append(makeCard(9999, true));
       });
       await home.waitForTimeout(100);
-      assert.equal(await home.locator('.missav-content-filter-hidden').count(), 0);
-      assert.equal(await home.locator('.missav-content-filter-grid-settling').count(), 0);
+      assert.equal(await home.locator('.viewing-assistant-hidden').count(), 0);
+      assert.equal(await home.locator('.viewing-assistant-grid-settling').count(), 0);
       assert.equal(await home.evaluate(() => metrics.clicks), 1);
       await home.evaluate(() => changeSettings({ homepageEnabled: { newValue: true } }));
       await home.waitForFunction(() => getComputedStyle(grid.lastElementChild).display === 'none');
@@ -186,13 +187,13 @@ async function measure(browser, source, count) {
     try {
       await install(slowHome, current, 12, true, true);
       await slowHome.waitForFunction(() => window.releaseMetadata &&
-        !grid.classList.contains('missav-content-filter-grid-settling'), null, { timeout: 6000 });
+        !grid.classList.contains('viewing-assistant-grid-settling'), null, { timeout: 6000 });
       assert.equal(await slowHome.evaluate(() => metrics.clicks), 1);
-      assert.ok(await slowHome.locator('.missav-content-filter-pending').count() > 0);
+      assert.ok(await slowHome.locator('.viewing-assistant-pending').count() > 0);
       assert.equal(await slowHome.evaluate(() => [...grid.children].filter(item => getComputedStyle(item).display !== 'none').length), 6,
         'native label settling finishes independently and reveals known cards while data is still pending');
       await slowHome.evaluate(() => releaseMetadata());
-      await slowHome.waitForFunction(() => !document.querySelector('.missav-content-filter-pending'));
+      await slowHome.waitForFunction(() => !document.querySelector('.viewing-assistant-pending'));
       assert.equal(await slowHome.evaluate(() => metrics.blockedPeak), 0);
       assert.equal(await slowHome.evaluate(() => [...grid.children].filter(item => getComputedStyle(item).display !== 'none').length), 9);
       console.log(JSON.stringify({ homepageSlowData: 'native settling completes while metadata remains pending' }));

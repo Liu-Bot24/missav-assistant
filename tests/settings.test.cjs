@@ -36,25 +36,27 @@ function createSettings({ local = {}, sync = {}, failures = {} } = {}) {
   };
   const storage = { local: area("local", structuredClone(local)), sync: area("sync", structuredClone(sync)) };
   const context = vm.createContext({ chrome: { runtime, storage }, console });
-  for (const file of ["label-library.js", "genre-library.js", "settings.js"]) vm.runInContext(read(file), context);
-  return { settings: context.MissavSettings, local: storage.local.state, sync: storage.sync.state, calls };
+  for (const file of ["text.js", "label-library.js", "category-library.js", "settings.js"]) vm.runInContext(read(file), context);
+  return { settings: context.SettingsStore, local: storage.local.state, sync: storage.sync.state, calls };
 }
 
 const load = (harness) => new Promise((resolve) => harness.settings.load(resolve));
 
-test("旧版同步设置首次读取时复制到本机，同步区原样保留", async () => {
-  const harness = createSettings({ sync: { enabled: false, maxActresses: 5, genreExcludeRules: [] } });
+test("1.0 版同步区的设置首次读取时按新名称复制到本机，同步区原样保留", async () => {
+  const harness = createSettings({ sync: { enabled: false, maxActresses: 5, genreExcludeRules: [], blockedPresets: ["chinese-subtitle"] } });
   const loaded = await load(harness);
   assert.equal(loaded.enabled, false);
   assert.equal(loaded.maxActresses, 5);
-  assert.deepEqual(Array.from(loaded.genreExcludeRules), []);
-  assert.equal(harness.local.enabled, false);
-  assert.equal(harness.local.settingsStorage, "local");
+  assert.deepEqual(Array.from(loaded.categoryExcludeRules), []);
+  assert.deepEqual(Array.from(loaded.hiddenLabels), ["chinese-subtitle"]);
+  assert.deepEqual(Array.from(harness.local.hiddenLabels), ["chinese-subtitle"]);
+  assert.equal(harness.local.settingsVersion, 2);
   assert.equal(harness.sync.maxActresses, 5, "其他设备的旧版本仍依赖这份副本，不自动删除");
+  assert.deepEqual(harness.sync.genreExcludeRules, []);
 });
 
-test("迁移完成后只读本机，不再读取或写入同步区", async () => {
-  const harness = createSettings({ local: { settingsStorage: "local", enabled: true }, sync: { enabled: false } });
+test("已是当前版本时只读本机，不再读取或写入同步区", async () => {
+  const harness = createSettings({ local: { settingsVersion: 2, enabled: true }, sync: { enabled: false } });
   assert.equal((await load(harness)).enabled, true);
   await new Promise((resolve) => harness.settings.save({ ...harness.settings.DEFAULTS, hideUntagged: true }, resolve));
   assert.equal(harness.local.hideUntagged, true);
@@ -69,18 +71,45 @@ test("迁移不覆盖本机已保存的设置", async () => {
   assert.equal(loaded.hideUntagged, true);
 });
 
-test("没有旧设置时使用默认值并记录已迁移", async () => {
+test("本机旧名称的设置改用新名称，旧键和旧标记删除，不再读同步区", async () => {
+  const harness = createSettings({
+    local: { settingsStorage: "local", blockedPresets: ["other-subtitle"], genreIncludeRules: ["value:VR"], enabled: false },
+    sync: { enabled: true, blockedPresets: ["uncensored"] }
+  });
+  const loaded = await load(harness);
+  assert.equal(loaded.enabled, false);
+  assert.deepEqual(Array.from(loaded.hiddenLabels), ["other-subtitle"]);
+  assert.deepEqual(Array.from(harness.local.categoryIncludeRules), ["value:VR"]);
+  for (const key of ["settingsStorage", "blockedPresets", "genreIncludeRules"]) {
+    assert.equal(Object.hasOwn(harness.local, key), false, key);
+  }
+  assert.equal(harness.calls.some((call) => call.startsWith("sync.")), false);
+});
+
+test("只有早期版本能存的值在迁移时换成现在的写法", async () => {
+  const harness = createSettings({ sync: {
+    blockedPresets: ["english-subtitle"],
+    genreIncludeRules: [`value:${encodeURIComponent("4小時以上")}`],
+    genreExcludeRules: [`value:${encodeURIComponent("4時間以上作品")}`]
+  } });
+  const loaded = await load(harness);
+  assert.deepEqual(Array.from(loaded.hiddenLabels), ["other-subtitle"]);
+  assert.deepEqual(Array.from(loaded.categoryIncludeRules), ["group:duration-4h-plus"]);
+  assert.deepEqual(Array.from(loaded.categoryExcludeRules), ["group:duration-4h-plus"]);
+});
+
+test("没有旧设置时使用默认值并记录版本", async () => {
   const harness = createSettings();
   const loaded = await load(harness);
   assert.equal(loaded.enabled, true);
-  assert.deepEqual(Array.from(loaded.blockedPresets), ["uncensored"]);
-  assert.equal(harness.local.settingsStorage, "local");
+  assert.deepEqual(Array.from(loaded.hiddenLabels), ["uncensored"]);
+  assert.equal(harness.local.settingsVersion, 2);
 });
 
-test("同步区读不到时不标记迁移，下次启动还会再试", async () => {
+test("同步区读不到时不记录版本，下次启动还会再试", async () => {
   const harness = createSettings({ sync: { enabled: false }, failures: { "sync.get": true } });
   assert.equal((await load(harness)).enabled, true);
-  assert.equal(Object.hasOwn(harness.local, "settingsStorage"), false);
+  assert.equal(Object.hasOwn(harness.local, "settingsVersion"), false);
 });
 
 test("保存失败会把错误交给调用方", async () => {
@@ -90,10 +119,11 @@ test("保存失败会把错误交给调用方", async () => {
 });
 
 test("账号中的旧副本只在用户删除时移除，且只删设置项", async () => {
-  const harness = createSettings({ sync: { enabled: false, unrelated: 1 } });
+  const harness = createSettings({ sync: { enabled: false, blockedPresets: [], unrelated: 1 } });
   assert.equal(await new Promise((resolve) => harness.settings.hasSyncCopy(resolve)), true);
   assert.equal(await new Promise((resolve) => harness.settings.removeSyncCopy(resolve)), null);
   assert.equal(Object.hasOwn(harness.sync, "enabled"), false);
+  assert.equal(Object.hasOwn(harness.sync, "blockedPresets"), false, "旧名称的设置项一并删除");
   assert.equal(harness.sync.unrelated, 1);
   assert.equal(await new Promise((resolve) => harness.settings.hasSyncCopy(resolve)), false);
 });

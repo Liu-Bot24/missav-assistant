@@ -1,12 +1,12 @@
-[data-viewing-assistant] .missav-content-filter-hidden {
+[data-viewing-assistant] .viewing-assistant-hidden {
   display: none !important;
 }
 
-[data-viewing-assistant] .missav-actress-host {
+[data-viewing-assistant] .viewing-assistant-names-host {
   position: relative;
 }
 
-[data-viewing-assistant] .missav-actress-names {
+[data-viewing-assistant] .viewing-assistant-names {
   position: absolute;
   top: 6px;
   left: 6px;
@@ -31,16 +31,16 @@
   pointer-events: none;
 }
 
-[data-viewing-assistant] .missav-content-filter-grid-settling {
+[data-viewing-assistant] .viewing-assistant-grid-settling {
   position: relative;
   min-height: 180px;
 }
 
-[data-viewing-assistant] .missav-content-filter-grid-settling > * {
+[data-viewing-assistant] .viewing-assistant-grid-settling > * {
   visibility: hidden !important;
 }
 
-[data-viewing-assistant] .missav-content-filter-grid-settling::after {
+[data-viewing-assistant] .viewing-assistant-grid-settling::after {
   position: absolute;
   inset: 0;
   display: flex;
@@ -53,12 +53,12 @@
   visibility: visible;
 }
 
-[data-viewing-assistant] .missav-content-filter-control-busy {
+[data-viewing-assistant] .viewing-assistant-control-busy {
   visibility: hidden !important;
   pointer-events: none !important;
 }
 
-[data-viewing-assistant] .missav-content-filter-retry {
+[data-viewing-assistant] .viewing-assistant-retry {
   display: block;
   max-width: 100%;
   margin: 12px auto;
@@ -71,7 +71,7 @@
   font: 500 13px/1.5 system-ui, sans-serif;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel {
+[data-viewing-assistant] .viewing-assistant-sentinel {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -89,7 +89,7 @@
   transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel::before {
+[data-viewing-assistant] .viewing-assistant-sentinel::before {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -97,32 +97,32 @@
   content: "";
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel:hover,
-[data-viewing-assistant] .missav-content-filter-sentinel:focus-visible {
+[data-viewing-assistant] .viewing-assistant-sentinel:hover,
+[data-viewing-assistant] .viewing-assistant-sentinel:focus-visible {
   border-color: rgba(240, 82, 124, 0.7);
   color: #fff;
   background: rgba(51, 65, 85, 0.88);
   outline: none;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel.is-loading::before {
-  animation: missav-filter-pulse 900ms ease-in-out infinite alternate;
+[data-viewing-assistant] .viewing-assistant-sentinel.is-loading::before {
+  animation: viewing-assistant-pulse 900ms ease-in-out infinite alternate;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel.is-complete {
+[data-viewing-assistant] .viewing-assistant-sentinel.is-complete {
   cursor: default;
   opacity: 0.7;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel.is-complete::before {
+[data-viewing-assistant] .viewing-assistant-sentinel.is-complete::before {
   background: #32c7a2;
 }
 
-[data-viewing-assistant] .missav-content-filter-sentinel.is-error::before {
+[data-viewing-assistant] .viewing-assistant-sentinel.is-error::before {
   background: #f59e0b;
 }
 
-@keyframes missav-filter-pulse {
+@keyframes viewing-assistant-pulse {
   to {
     opacity: 0.25;
     transform: scale(1.65);
@@ -130,11 +130,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-viewing-assistant] .missav-content-filter-sentinel {
+  [data-viewing-assistant] .viewing-assistant-sentinel {
     transition: none;
   }
 
-  [data-viewing-assistant] .missav-content-filter-sentinel.is-loading::before {
+  [data-viewing-assistant] .viewing-assistant-sentinel.is-loading::before {
     animation: none;
   }
 }

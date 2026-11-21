@@ -8,7 +8,7 @@ const tick = () => new Promise(setImmediate);
 function create(query, delay = async () => {}) {
   const context = { queueMicrotask, setTimeout };
   vm.runInNewContext(source, context);
-  return context.MissavMetadataClient.create({ query, delay });
+  return context.MetadataClient.create({ query, delay });
 }
 
 test('65 个未缓存影片合并为 30/30/5，慢批次不阻塞已返回批次', async () => {

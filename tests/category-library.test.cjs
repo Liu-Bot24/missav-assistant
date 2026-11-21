@@ -4,12 +4,13 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const source = fs.readFileSync(path.join(__dirname, "..", "genre-library.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "..", "category-library.js"), "utf8");
 
 function loadLibrary() {
   const context = {};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "text.js"), "utf8"), context);
   vm.runInNewContext(source, context);
-  return context.MissavGenreLibrary;
+  return context.CategoryLibrary;
 }
 
 test("组合规则匹配站内多语言相关类型", () => {
@@ -60,12 +61,11 @@ test("未收录的新类型保留原值，不猜测翻译或扩大匹配", () =>
   assert.equal(library.matches(library.valueRule(value), ["新分类-X2"]), false);
 });
 
-test("四小时以上按接口时长秒数判断，并迁移旧文字规则", () => {
+test("四小时以上按接口时长秒数判断，站内同名分类不单独列出", () => {
   const library = loadLibrary();
   const durationRule = library.groupRule("duration-4h-plus");
-  const legacyRule = library.valueRule("4小時以上");
+  const siteCategory = library.valueRule("4時間以上作品");
 
-  assert.equal(library.normalizeRule(legacyRule), durationRule);
   assert.equal(library.matches(durationRule, [], { duration: 14438 }), true);
   assert.equal(library.matches(durationRule, [], { duration: 7279 }), false);
   assert.equal(
@@ -75,7 +75,7 @@ test("四小时以上按接口时长秒数判断，并迁移旧文字规则", ()
     true
   );
   assert.equal(
-    library.options().some((option) => option.rule === legacyRule),
+    library.options().some((option) => option.rule === siteCategory),
     false
   );
 });

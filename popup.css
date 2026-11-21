@@ -212,58 +212,58 @@ input[type="text"]:focus-visible {
   font-size: 11px;
 }
 
-.genre-panel {
+.category-panel {
   overflow: visible;
 }
 
-.genre-explainer {
+.category-explainer {
   margin: 0;
   padding: 0 14px 9px;
   color: var(--muted);
   font-size: 11px;
 }
 
-.genre-picker {
+.category-picker {
   position: relative;
   z-index: 1;
   padding: 0 14px 11px;
 }
 
-.genre-picker + .genre-picker {
+.category-picker + .category-picker {
   padding-top: 10px;
   border-top: 1px solid #edf0f4;
 }
 
-.genre-picker.is-open {
+.category-picker.is-open {
   z-index: 5;
 }
 
-.genre-picker-label {
+.category-picker-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   margin-bottom: 6px;
 }
 
-.genre-picker-label span {
+.category-picker-label span {
   font-size: 12px;
   font-weight: 750;
 }
 
-.genre-picker-label small {
+.category-picker-label small {
   color: var(--muted);
   font-size: 10px;
 }
 
-.include-picker .genre-picker-label span {
+.include-picker .category-picker-label span {
   color: #08745c;
 }
 
-.exclude-picker .genre-picker-label span {
+.exclude-picker .category-picker-label span {
   color: #a62e50;
 }
 
-.genre-chip-field {
+.category-chip-field {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -276,17 +276,17 @@ input[type="text"]:focus-visible {
   cursor: text;
 }
 
-.include-picker .genre-chip-field:focus-within {
+.include-picker .category-chip-field:focus-within {
   border-color: rgba(50, 199, 162, 0.8);
   box-shadow: 0 0 0 3px rgba(50, 199, 162, 0.13);
 }
 
-.exclude-picker .genre-chip-field:focus-within {
+.exclude-picker .category-chip-field:focus-within {
   border-color: rgba(240, 82, 124, 0.75);
   box-shadow: 0 0 0 3px rgba(240, 82, 124, 0.12);
 }
 
-.genre-chip-field input {
+.category-chip-field input {
   flex: 1 1 125px;
   min-width: 90px;
   height: 26px;
@@ -298,7 +298,7 @@ input[type="text"]:focus-visible {
   font-size: 12px;
 }
 
-.selected-genre-chip {
+.selected-category-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -311,19 +311,19 @@ input[type="text"]:focus-visible {
   line-height: 1.25;
 }
 
-.selected-genre-chip.include {
+.selected-category-chip.include {
   color: #08745c;
   border-color: rgba(50, 199, 162, 0.38);
   background: rgba(50, 199, 162, 0.12);
 }
 
-.selected-genre-chip.exclude {
+.selected-category-chip.exclude {
   color: #9d2e4c;
   border-color: rgba(240, 82, 124, 0.36);
   background: var(--accent-soft);
 }
 
-.selected-genre-chip button {
+.selected-category-chip button {
   display: grid;
   width: 17px;
   height: 17px;
@@ -338,11 +338,11 @@ input[type="text"]:focus-visible {
   place-items: center;
 }
 
-.selected-genre-chip button:hover {
+.selected-category-chip button:hover {
   background: #fff;
 }
 
-.genre-suggestions {
+.category-suggestions {
   position: absolute;
   top: calc(100% - 6px);
   right: 14px;
@@ -358,11 +358,11 @@ input[type="text"]:focus-visible {
   box-shadow: 0 14px 30px rgba(25, 29, 39, 0.18);
 }
 
-.genre-suggestions[hidden] {
+.category-suggestions[hidden] {
   display: none;
 }
 
-.genre-suggestion {
+.category-suggestion {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 22px;
   gap: 8px;
@@ -377,39 +377,39 @@ input[type="text"]:focus-visible {
   cursor: pointer;
 }
 
-.genre-suggestion + .genre-suggestion {
+.category-suggestion + .category-suggestion {
   border-top: 1px solid #edf0f4;
 }
 
-.genre-suggestion:hover,
-.genre-suggestion:focus-visible {
+.category-suggestion:hover,
+.category-suggestion:focus-visible {
   outline: 0;
   background: #f5f8fb;
 }
 
-.genre-suggestion.is-group {
+.category-suggestion.is-group {
   background: #fff8fa;
 }
 
-.genre-suggestion strong,
-.genre-suggestion small {
+.category-suggestion strong,
+.category-suggestion small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.genre-suggestion strong {
+.category-suggestion strong {
   font-size: 12px;
 }
 
-.genre-suggestion small {
+.category-suggestion small {
   margin-top: 2px;
   color: var(--muted);
   font-size: 9px;
 }
 
-.genre-add-mark {
+.category-add-mark {
   display: grid;
   width: 22px;
   height: 22px;
@@ -420,7 +420,7 @@ input[type="text"]:focus-visible {
   place-items: center;
 }
 
-.genre-suggestion-empty {
+.category-suggestion-empty {
   margin: 0;
   padding: 9px 10px;
   color: var(--muted);

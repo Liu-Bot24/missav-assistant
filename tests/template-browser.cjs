@@ -48,8 +48,8 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
     });
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 10000 });
     await worker.evaluate(() => chrome.storage.local.set({ enabled: true, homepageEnabled: true,
-      blockedPresets: ['chinese-subtitle'], hideUntagged: false, infiniteScroll: false,
-      genreIncludeRules: ['value:impossible'], genreExcludeRules: ['value:blocked'] }));
+      hiddenLabels: ['chinese-subtitle'], hideUntagged: false, infiniteScroll: false,
+      categoryIncludeRules: ['value:impossible'], categoryExcludeRules: ['value:blocked'] }));
     const open = async url => {
       const page = await context.newPage();
       page.on('pageerror', error => errors.push(error.message));
@@ -60,15 +60,15 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
       const page = await open(`https://${host}/cn/new`);
       await page.waitForTimeout(200);
       assert.equal(await page.locator('[data-viewing-assistant]').count(), 0, host);
-      assert.equal(await page.locator('.missav-content-filter-hidden').count(), 0, host);
+      assert.equal(await page.locator('.viewing-assistant-hidden').count(), 0, host);
       await page.close();
     }
     const single = await open('https://one-result.test/cn/search?q=sample');
-    await single.waitForSelector('.missav-content-filter-hidden', { state: 'attached', timeout: 5000 });
+    await single.waitForSelector('.viewing-assistant-hidden', { state: 'attached', timeout: 5000 });
     await single.close();
     const home = await open('https://compatible.test/cn');
     await home.waitForFunction(() => window.clicks === 1 &&
-      !document.querySelector('.missav-content-filter-grid-settling'), null, { timeout: 10000 });
+      !document.querySelector('.viewing-assistant-grid-settling'), null, { timeout: 10000 });
     assert.equal(await visibleCount(home), 8);
     const status = await worker.evaluate(async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -77,16 +77,16 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
     assert.equal(status.compatible, true);
     assert.equal(status.metadata, null);
     assert.equal(status.pageKind, 'home');
-    assert.equal(await home.locator('.missav-content-filter-pending').count(), 0);
+    assert.equal(await home.locator('.viewing-assistant-pending').count(), 0);
     await home.close();
     const paginated = await open('https://compatible.test/cn/new');
-    await paginated.waitForFunction(() => document.querySelectorAll('[data-missav-filter-refill]').length === 6);
+    await paginated.waitForFunction(() => document.querySelectorAll('[data-viewing-assistant-refill]').length === 6);
     assert.equal(await visibleCount(paginated), 12);
     assert.equal(nextRequests, 1);
     await paginated.close();
     await worker.evaluate(() => chrome.storage.local.set({ infiniteScroll: true }));
     const infinite = await open('https://another-template.test/cn/new');
-    await infinite.waitForFunction(() => document.querySelector('.missav-content-filter-sentinel')?.classList.contains('is-complete'));
+    await infinite.waitForFunction(() => document.querySelector('.viewing-assistant-sentinel')?.classList.contains('is-complete'));
     assert.equal(await visibleCount(infinite), 12);
     assert.equal(nextRequests, 2);
     await infinite.close();
@@ -107,21 +107,21 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
     await delayed.close();
     // Upgrade from a sync-storage version: preferences exist only in the account copy.
     await worker.evaluate(async () => {
-      await chrome.storage.local.remove([...MissavSettings.KEYS, 'settingsStorage']);
+      await chrome.storage.local.remove([...SettingsStore.KEYS, 'settingsVersion']);
       await chrome.storage.sync.set({ enabled: false });
     });
     const upgraded = await open('https://compatible.test/cn/new');
     await upgraded.waitForTimeout(300);
-    assert.equal(await upgraded.locator('.missav-content-filter-hidden').count(), 0, 'migrated pause is applied');
+    assert.equal(await upgraded.locator('.viewing-assistant-hidden').count(), 0, 'migrated pause is applied');
     assert.equal(await visibleCount(upgraded), 12, 'paused filtering shows every native card');
     const migrated = await worker.evaluate(async () => ({
-      local: await chrome.storage.local.get(['enabled', 'settingsStorage']),
+      local: await chrome.storage.local.get(['enabled', 'settingsVersion']),
       sync: await chrome.storage.sync.get('enabled')
     }));
-    assert.deepEqual(migrated, { local: { enabled: false, settingsStorage: 'local' }, sync: { enabled: false } });
+    assert.deepEqual(migrated, { local: { enabled: false, settingsVersion: 2 }, sync: { enabled: false } });
     // Later local changes take effect without the account copy.
-    await worker.evaluate(() => chrome.storage.local.set({ enabled: true, blockedPresets: ['chinese-subtitle'] }));
-    await upgraded.waitForSelector('.missav-content-filter-hidden', { state: 'attached', timeout: 3000 });
+    await worker.evaluate(() => chrome.storage.local.set({ enabled: true, hiddenLabels: ['chinese-subtitle'] }));
+    await upgraded.waitForSelector('.viewing-assistant-hidden', { state: 'attached', timeout: 3000 });
     await upgraded.close();
     assert.equal(metadataRequests, 0, '未知站点不得访问原站分类库');
     assert.deepEqual(errors, []);

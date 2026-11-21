@@ -76,7 +76,7 @@ function createCacheHarness(initialState = {}, options = {}) {
     metrics, local, state: local.state,
     message(value, sender, respond) { return listener(value, sender, respond); },
     query(ids) { return new Promise((resolve) => listener(
-      { type: "missav-query-metadata", itemIds: ids },
+      { type: "viewing-assistant-query-metadata", itemIds: ids },
       { tab: { url: "https://missav.ai/new" } }, resolve
     )); },
     async clear() {
@@ -289,7 +289,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
 
   const response = await new Promise((resolve) => {
     const pending = messageListener(
-      { type: "missav-query-metadata", itemIds: ["PETS-071", "MIDA-737"] },
+      { type: "viewing-assistant-query-metadata", itemIds: ["PETS-071", "MIDA-737"] },
       { tab: { url: "https://missav.ai/new" } },
       resolve
     );
@@ -323,7 +323,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
 
   const cachedResponse = await new Promise((resolve) => {
     messageListener(
-      { type: "missav-query-metadata", itemIds: ["PETS-071"] },
+      { type: "viewing-assistant-query-metadata", itemIds: ["PETS-071"] },
       { tab: { url: "https://missav.ai/new" } },
       resolve
     );
@@ -369,7 +369,7 @@ test("分类列表满 500 项时淘汰最少出现的，常见分类保留", asy
 test("未适配域名不能调用原站分类库，包括名称相似的域名", () => {
   const harness = createCacheHarness();
   for (const url of ["https://compatible.test/new", "https://missav.ai.other.test/new", "invalid-url"]) {
-    const accepted = harness.message({ type: "missav-query-metadata", itemIds: ["sample-001"] },
+    const accepted = harness.message({ type: "viewing-assistant-query-metadata", itemIds: ["sample-001"] },
       { url, tab: {} }, () => assert.fail("不应返回分类结果"));
     assert.equal(accepted, false, url);
   }

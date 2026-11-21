@@ -2,23 +2,22 @@
   "use strict";
 
   let site;
-  const DEFAULT_SETTINGS = MissavSettings.DEFAULTS;
-  const sanitizeSettings = MissavSettings.sanitize;
+  const DEFAULT_SETTINGS = SettingsStore.DEFAULTS;
+  const sanitizeSettings = SettingsStore.sanitize;
   const LIST_ROUTE_SEGMENTS = new Set([
     "actress", "actresses", "genre", "genres", "label", "labels",
     "maker", "makers", "search", "series", "tag", "tags"
   ]);
-  const VIDEO_SLUG_PATTERN = /^(?=.*[a-z])(?=.*\d)[a-z0-9]+(?:[-_][a-z0-9]+)+$/i;
-  const HIDDEN_CLASS = "missav-content-filter-hidden";
-  const LABEL_HIDDEN_CLASS = "missav-content-filter-label-hidden";
-  const GENRE_HIDDEN_CLASS = "missav-content-filter-genre-hidden";
-  const ACTRESS_NAMES_CLASS = "missav-actress-names";
-  const ACTRESS_HOST_CLASS = "missav-actress-host";
-  const PENDING_CLASS = "missav-content-filter-pending";
-  const UNVERIFIED_CLASS = "missav-content-filter-unverified";
-  const SETTLING_GRID_CLASS = "missav-content-filter-grid-settling";
-  const BUSY_CONTROL_CLASS = "missav-content-filter-control-busy";
-  const REFILL_ATTRIBUTE = "data-missav-filter-refill";
+  const HIDDEN_CLASS = "viewing-assistant-hidden";
+  const LABEL_HIDDEN_CLASS = "viewing-assistant-label-hidden";
+  const CATEGORY_HIDDEN_CLASS = "viewing-assistant-category-hidden";
+  const ACTRESS_NAMES_CLASS = "viewing-assistant-names";
+  const ACTRESS_HOST_CLASS = "viewing-assistant-names-host";
+  const PENDING_CLASS = "viewing-assistant-pending";
+  const UNVERIFIED_CLASS = "viewing-assistant-unverified";
+  const SETTLING_GRID_CLASS = "viewing-assistant-grid-settling";
+  const BUSY_CONTROL_CLASS = "viewing-assistant-control-busy";
+  const REFILL_ATTRIBUTE = "data-viewing-assistant-refill";
   const MAX_REFILL_PAGES = 8;
   const MAX_HOME_REFILL_CLICKS = 8;
   const MAX_CONCURRENT_HOME_REFILLS = 1;
@@ -27,14 +26,14 @@
   const HOME_REFILL_RESPONSE_TIMEOUT_MS = 15000;
   const HOME_GRID_REVEAL_QUIET_MS = 1800;
   const OBSERVED_ATTRIBUTES = ["style", "class", "hidden", "href"];
-  const OWN_CLASSES = new Set([HIDDEN_CLASS, LABEL_HIDDEN_CLASS, GENRE_HIDDEN_CLASS,
+  const OWN_CLASSES = new Set([HIDDEN_CLASS, LABEL_HIDDEN_CLASS, CATEGORY_HIDDEN_CLASS,
     ACTRESS_NAMES_CLASS, ACTRESS_HOST_CLASS, PENDING_CLASS, UNVERIFIED_CLASS,
     SETTLING_GRID_CLASS, BUSY_CONTROL_CLASS]);
   const PAGE_REQUEST_TIMEOUT_MS = 15000;
   const MAX_CACHED_PAGES = MAX_REFILL_PAGES * 2;
   const pageHtmlCache = new Map();
   const pageRequests = new Set();
-  const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
+  const metadataClient = MetadataClient.create({ query: sendMetadataQuery });
   // Only cards whose data changed are re-checked; settings, page load and
   // navigation re-check the whole page.
   const changedMetadataIds = new Set();
@@ -59,8 +58,8 @@
   let settings = { ...DEFAULT_SETTINGS };
   let scanScheduled = false;
   let observerStarted = false;
-  let refillInProgress = false;
-  let refillRequested = false;
+  let workLoopRunning = false;
+  let workRequested = false;
   let filterRevision = 0;
   let infiniteObserver = null;
   let infiniteSentinel = null;
@@ -76,13 +75,7 @@
   // Set when the page limit was reached without filling the grid; the notice continues from here.
   let paginationResumeUrl = null;
 
-  function normalizeText(value) {
-    return String(value ?? "")
-      .normalize("NFKC")
-      .replace(/\s+/g, "")
-      .trim()
-      .toLocaleLowerCase();
-  }
+  const normalizeText = TextKey.normalize;
 
   function isVideoDetailPage(url = location.href) {
     try {
@@ -91,7 +84,7 @@
         .filter(Boolean)
         .map((segment) => segment.toLocaleLowerCase());
       const slug = segments.at(-1) ?? "";
-      if (!VIDEO_SLUG_PATTERN.test(slug)) return false;
+      if (!SiteLibrary.VIDEO_ID.test(slug)) return false;
       return !segments.slice(0, -1).some((segment) => LIST_ROUTE_SEGMENTS.has(segment));
     } catch {
       return false;
@@ -195,7 +188,7 @@
   }
 
   function hasBlockedStructuredMarker(card) {
-    if (!settings.blockedPresets.includes("uncensored")) return false;
+    if (!settings.hiddenLabels.includes("uncensored")) return false;
     const itemId = getCardItemId(card, location.href);
     return Boolean(itemId?.endsWith("-uncensored-leak"));
   }
@@ -212,9 +205,9 @@
 
     return visibleLabels.some((label) => {
       const condition = label.getAttribute("x-show") ?? label.parentElement?.getAttribute("x-show");
-      const kind = MissavLabelLibrary.classifyCondition(condition) ??
-        MissavLabelLibrary.classifyText(label.textContent);
-      return kind !== null && settings.blockedPresets.includes(kind);
+      const kind = LabelLibrary.classifyCondition(condition) ??
+        LabelLibrary.classifyText(label.textContent);
+      return kind !== null && settings.hiddenLabels.includes(kind);
     });
   }
 
@@ -222,7 +215,7 @@
     const layoutItem = findLayoutItem(card);
     const hidden =
       layoutItem.classList.contains(LABEL_HIDDEN_CLASS) ||
-      layoutItem.classList.contains(GENRE_HIDDEN_CLASS) ||
+      layoutItem.classList.contains(CATEGORY_HIDDEN_CLASS) ||
       layoutItem.classList.contains(UNVERIFIED_CLASS) ||
       layoutItem.classList.contains(PENDING_CLASS);
     if (layoutItem.classList.contains(HIDDEN_CLASS) !== hidden) {
@@ -243,7 +236,7 @@
   function clearCardFilterState(card) {
     const layoutItem = findLayoutItem(card);
     layoutItem.classList.toggle(LABEL_HIDDEN_CLASS, false);
-    layoutItem.classList.toggle(GENRE_HIDDEN_CLASS, false);
+    layoutItem.classList.toggle(CATEGORY_HIDDEN_CLASS, false);
     layoutItem.classList.toggle(PENDING_CLASS, false);
     layoutItem.classList.toggle(UNVERIFIED_CLASS, false);
     syncCardHiddenState(card);
@@ -304,7 +297,7 @@
       removeActressNames(card);
       setCardPending(card, false);
       setCardHiddenForReason(card, UNVERIFIED_CLASS, false);
-      setCardHiddenForReason(card, GENRE_HIDDEN_CLASS, false);
+      setCardHiddenForReason(card, CATEGORY_HIDDEN_CLASS, false);
       markCardSettled(card);
     }
 
@@ -313,7 +306,7 @@
         removeActressNames(card);
         setCardPending(card, false);
         setCardHiddenForReason(card, UNVERIFIED_CLASS, false);
-        setCardHiddenForReason(card, GENRE_HIDDEN_CLASS, false);
+        setCardHiddenForReason(card, CATEGORY_HIDDEN_CLASS, false);
         markCardSettled(card);
       }
       return visibleEligible;
@@ -467,15 +460,15 @@
     }
   }
 
-  function genreFilteringEnabled() {
+  function categoryFilteringEnabled() {
     return site.metadata === "missav" && (
-      settings.genreIncludeRules.length > 0 ||
-      settings.genreExcludeRules.length > 0
+      settings.categoryIncludeRules.length > 0 ||
+      settings.categoryExcludeRules.length > 0
     );
   }
 
   function metadataFilteringEnabled() {
-    return genreFilteringEnabled() || (site.metadata === "missav" && settings.actressLimitEnabled);
+    return categoryFilteringEnabled() || (site.metadata === "missav" && settings.actressLimitEnabled);
   }
 
   function needsMetadata() {
@@ -528,15 +521,15 @@
         metadata.cast.confirmedCount > settings.maxActresses) return false;
 
     const values = metadataValues(metadata);
-    const excluded = settings.genreExcludeRules.some((rule) =>
-      MissavGenreLibrary.matches(rule, values, metadata)
+    const excluded = settings.categoryExcludeRules.some((rule) =>
+      CategoryLibrary.matches(rule, values, metadata)
     );
     if (excluded) return false;
 
     return (
-      settings.genreIncludeRules.length === 0 ||
-      settings.genreIncludeRules.some((rule) =>
-        MissavGenreLibrary.matches(rule, values, metadata)
+      settings.categoryIncludeRules.length === 0 ||
+      settings.categoryIncludeRules.some((rule) =>
+        CategoryLibrary.matches(rule, values, metadata)
       )
     );
   }
@@ -544,7 +537,7 @@
   function sendMetadataQuery(itemIds) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { type: "missav-query-metadata", itemIds },
+        { type: "viewing-assistant-query-metadata", itemIds },
         (response) => {
           if (chrome.runtime.lastError || !response?.ok) {
             resolve({});
@@ -563,15 +556,15 @@
     if (["idle", "pending"].includes(record.status)) return "pending";
     // The service has no record of this video, so retrying cannot help. It can
     // only fail a "show only" rule; hide and exclude rules have nothing to match.
-    if (record.status === "missing") return settings.genreIncludeRules.length > 0 && genreFilteringEnabled() ? "blocked" : "passed";
+    if (record.status === "missing") return settings.categoryIncludeRules.length > 0 && categoryFilteringEnabled() ? "blocked" : "passed";
     if (record.status !== "ready") return "unverified";
     const metadata = record.data;
-    if (genreFilteringEnabled() && (!Array.isArray(metadata.genres) || !Array.isArray(metadata.tags) ||
+    if (categoryFilteringEnabled() && (!Array.isArray(metadata.genres) || !Array.isArray(metadata.tags) ||
         typeof metadata.type !== "string")) {
       return "unverified";
     }
     if (settings.actressLimitEnabled && !Array.isArray(metadata.actresses)) return "unverified";
-    if ([...settings.genreIncludeRules, ...settings.genreExcludeRules].includes("group:duration-4h-plus") &&
+    if ([...settings.categoryIncludeRules, ...settings.categoryExcludeRules].includes("group:duration-4h-plus") &&
         (metadata.duration === null || metadata.duration === undefined || !Number.isFinite(Number(metadata.duration)))) {
       return "unverified";
     }
@@ -582,7 +575,7 @@
     const decision = metadataDecision(itemId);
     const layoutItem = findLayoutItem(card);
     // Apply a single decision before syncing visibility: no intermediate reveal.
-    layoutItem.classList.toggle(GENRE_HIDDEN_CLASS, decision === "blocked");
+    layoutItem.classList.toggle(CATEGORY_HIDDEN_CLASS, decision === "blocked");
     layoutItem.classList.toggle(PENDING_CLASS, decision === "pending");
     layoutItem.classList.toggle(UNVERIFIED_CLASS, decision === "unverified");
     syncCardHiddenState(card);
@@ -631,7 +624,7 @@
         if (!notice) {
           notice = document.createElement("button");
           notice.type = "button";
-          notice.className = "missav-content-filter-retry";
+          notice.className = "viewing-assistant-retry";
           grid.after(notice);
           metadataNotices.set(grid, notice);
         }
@@ -1051,7 +1044,7 @@
 
     const parsed = new DOMParser().parseFromString(page.html, "text/html");
     const grid = findPaginatedGrid(parsed);
-    if (!MissavSiteLibrary.inspect(parsed, page.sourceUrl).compatible || !grid) return null;
+    if (!SiteLibrary.inspect(parsed, page.sourceUrl).compatible || !grid) return null;
     const baseHref = parsed.querySelector("base[href]")?.getAttribute("href");
     const baseUrl = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl, true)) || page.sourceUrl;
     for (const { item } of getGridItems(grid)) normalizeImportedUrls(item, baseUrl);
@@ -1275,7 +1268,7 @@
 
     infiniteSentinel = document.createElement("button");
     infiniteSentinel.type = "button";
-    infiniteSentinel.className = "missav-content-filter-sentinel";
+    infiniteSentinel.className = "viewing-assistant-sentinel";
     infiniteSentinel.textContent = "继续向下滚动";
     infiniteSentinel.addEventListener("click", () => {
       if (infiniteNeedsRetry) retryMetadata([...stalledPageIds]);
@@ -1314,12 +1307,12 @@
   }
 
   function runWorkLoop() {
-    if (refillInProgress) return;
+    if (workLoopRunning) return;
 
-    refillInProgress = true;
+    workLoopRunning = true;
     try {
-      while (refillRequested) {
-        refillRequested = false;
+      while (workRequested) {
+        workRequested = false;
         if (!isFilteringActive()) {
           restoreUnfilteredPage();
           continue;
@@ -1336,14 +1329,14 @@
         }
       }
     } finally {
-      refillInProgress = false;
-      if (refillRequested) scheduleScan();
+      workLoopRunning = false;
+      if (workRequested) scheduleScan();
     }
   }
 
   function scheduleScan() {
-    refillRequested = true;
-    if (scanScheduled || refillInProgress) return;
+    workRequested = true;
+    if (scanScheduled || workLoopRunning) return;
 
     scanScheduled = true;
     queueMicrotask(() => {
@@ -1527,7 +1520,7 @@
 
   function startFiltering(capabilities) {
     site = capabilities;
-    MissavSettings.load((storedSettings) => {
+    SettingsStore.load((storedSettings) => {
       settings = storedSettings;
 
       if (document.documentElement) {
@@ -1539,7 +1532,7 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "local") return;
-      const changedKeys = MissavSettings.changedSettings(changes);
+      const changedKeys = SettingsStore.changedSettings(changes);
       if (changedKeys.length === 0) return;
 
       const nextSettings = { ...settings };
@@ -1572,7 +1565,7 @@
   }
 
   let filterStatus;
-  const recognition = MissavSiteLibrary.watch(document, () => location.href, (site) => {
+  const recognition = SiteLibrary.watch(document, () => location.href, (site) => {
     filterStatus = startFiltering(site);
   });
   chrome.runtime.onMessage?.addListener((message, _sender, respond) => {

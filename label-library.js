@@ -1,8 +1,7 @@
 (() => {
   "use strict";
 
-  const normalize = (value) => String(value ?? "").normalize("NFKC")
-    .replace(/\s+/g, "").toLocaleLowerCase();
+  const normalize = TextKey.normalize;
 
   // Card badge translations verified against all 13 site locales on 2026-09-05.
   // These describe the badge, not the language of the current page.
@@ -44,11 +43,10 @@
       ? "chinese-subtitle" : "other-subtitle";
   }
 
-  function sanitizePresets(value) {
+  function sanitizeLabelKinds(value) {
     const keys = Array.isArray(value) ? value : ["uncensored"];
-    return [...new Set(keys.map((key) => key === "english-subtitle" ? "other-subtitle" : key)
-      .filter((key) => Object.hasOwn(aliases, key)))];
+    return [...new Set(keys.filter((key) => Object.hasOwn(aliases, key)))];
   }
 
-  globalThis.MissavLabelLibrary = Object.freeze({ classifyText, classifyCondition, sanitizePresets });
+  globalThis.LabelLibrary = Object.freeze({ classifyText, classifyCondition, sanitizeLabelKinds });
 })();

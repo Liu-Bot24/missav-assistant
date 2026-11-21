@@ -103,5 +103,5 @@
     });
   }
 
-  globalThis.MissavMetadataClient = Object.freeze({ create });
+  globalThis.MetadataClient = Object.freeze({ create });
 })();

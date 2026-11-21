@@ -1,6 +1,6 @@
 "use strict";
 
-importScripts("genre-library.js", "settings.js", "actress-data.js", "actress-library.js");
+importScripts("text.js", "site-library.js", "category-library.js", "settings.js", "actress-data.js", "actress-library.js");
 
 const DATABASE_ID = "missav-default";
 const API_HOST = "https://client-rapi-missav.recombee.com";
@@ -20,7 +20,7 @@ const MAX_DISCOVERED_CATEGORIES = 500;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
 chrome.runtime.onInstalled?.addListener(() => {
-  MissavSettings.migrate();
+  SettingsStore.migrate();
   void prepareMetadataCache().catch(() => {});
 });
 
@@ -65,7 +65,7 @@ function sanitizeMetadata(value) {
     type: typeof value.type === "string" ? value.type : null,
     duration: Number.isFinite(duration) ? duration : null,
     actresses,
-    cast: MissavActressLibrary.resolve(actresses)
+    cast: ActressLibrary.resolve(actresses)
   };
 }
 
@@ -291,14 +291,14 @@ function categoryValues(metadata) {
 // Counts how many videos carry each category, one per video and spelling-independent.
 function countCategories(counts, metadataList) {
   const byKey = new Map(Object.entries(counts).map(([value, count]) =>
-    [MissavGenreLibrary.conceptKey(value), [value, count]]));
+    [CategoryLibrary.conceptKey(value), [value, count]]));
   for (const metadata of metadataList) {
     const seen = new Set();
     for (const value of categoryValues(metadata)) {
-      const key = MissavGenreLibrary.conceptKey(value);
+      const key = CategoryLibrary.conceptKey(value);
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      const [stored, count] = byKey.get(key) ?? [MissavGenreLibrary.canonicalValue(value), 0];
+      const [stored, count] = byKey.get(key) ?? [CategoryLibrary.canonicalValue(value), 0];
       byKey.set(key, [stored, count + 1]);
     }
   }
@@ -337,12 +337,12 @@ function recordCategories(metadataById) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "missav-query-metadata") return false;
+  if (message?.type !== "viewing-assistant-query-metadata") return false;
 
   const senderUrl = sender.tab?.url ?? sender.url ?? "";
   try {
     const host = new URL(senderUrl).hostname;
-    if (host !== "missav.ai" && !host.endsWith(".missav.ai")) return false;
+    if (!SiteLibrary.isMetadataHost(host)) return false;
   } catch {
     return false;
   }

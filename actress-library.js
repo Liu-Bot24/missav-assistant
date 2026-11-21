@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const normalize = (value) => String(value ?? "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
+  const normalize = TextKey.normalize;
 
   function createResolver(data) {
     const ignored = new Set((data.ignoredAliases ?? []).map(normalize));
@@ -69,9 +69,9 @@
     };
   }
 
-  globalThis.MissavActressLibrary = Object.freeze({
+  globalThis.ActressLibrary = Object.freeze({
     normalize,
     createResolver,
-    resolve: createResolver(globalThis.MissavActressData)
+    resolve: createResolver(globalThis.ActressData)
   });
 })();

@@ -32,9 +32,10 @@
         "content.css"
       ],
       "js": [
+        "text.js",
         "site-library.js",
         "label-library.js",
-        "genre-library.js",
+        "category-library.js",
         "settings.js",
         "metadata-client.js",
         "content.js"

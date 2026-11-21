@@ -243,11 +243,8 @@
   ].map(([label, ...aliases]) => Object.freeze({ label, aliases: Object.freeze(aliases) })));
 
   function normalize(value) {
-    return String(value ?? "")
-      .normalize("NFKC")
-      // "3P・4P", "3P、4P" and "3P/4P" are the same category.
-      .replace(/[\s・、,/]+/g, "")
-      .toLocaleLowerCase();
+    // "3P・4P", "3P、4P" and "3P/4P" are the same category.
+    return TextKey.normalize(value).replace(/[・、,/]+/g, "");
   }
 
   function groupRule(id) {
@@ -287,13 +284,7 @@
   function normalizeRule(rule) {
     const text = String(rule);
     const value = decodeValueRule(text);
-    if (value !== null) {
-      const key = normalize(value);
-      if (["4小時以上", "4小时以上", "4時間以上", "4時間以上作品"].includes(key)) {
-        return groupRule("duration-4h-plus");
-      }
-      return valueRule(canonicalValue(value));
-    }
+    if (value !== null) return valueRule(canonicalValue(value));
 
     if (text.startsWith("group:")) {
       return groups.some((group) => groupRule(group.id) === text) ? text : null;
@@ -335,9 +326,8 @@
       .map((value) => String(canonicalValue(value)).trim())
       .filter((value) => {
         const key = normalize(value);
-        if (["4小時以上", "4小时以上", "4時間以上", "4時間以上作品"].includes(key)) {
-          return false;
-        }
+        // The site's own long-video category is offered as the duration rule instead.
+        if (key === normalize("4時間以上作品")) return false;
         if (!key || seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -365,7 +355,7 @@
     ];
   }
 
-  globalThis.MissavGenreLibrary = Object.freeze({
+  globalThis.CategoryLibrary = Object.freeze({
     groups,
     seedTypes,
     normalize,

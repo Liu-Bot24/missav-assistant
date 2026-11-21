@@ -8,6 +8,11 @@
   const VIDEO_ID = /^(?=.*[a-z])(?=.*\d)[a-z0-9]+(?:[-_][a-z0-9]+)+$/i;
   const UNSUPPORTED = Object.freeze({ compatible: false, metadata: null });
 
+  // The only site whose category service this extension may query.
+  function isMetadataHost(hostname) {
+    return hostname === "missav.ai" || hostname.endsWith(".missav.ai");
+  }
+
   function inspect(root, href) {
     let page;
     try { page = new URL(href); } catch { return UNSUPPORTED; }
@@ -15,7 +20,7 @@
 
     // A verified adapter keeps the original site's document-start behavior.
     // Other hosts must qualify by structure and never inherit its metadata DB.
-    if (page.hostname === "missav.ai" || page.hostname.endsWith(".missav.ai")) {
+    if (isMetadataHost(page.hostname)) {
       return { compatible: true, metadata: "missav" };
     }
 
@@ -112,5 +117,5 @@
     return { check };
   }
 
-  globalThis.MissavSiteLibrary = Object.freeze({ inspect, watch });
+  globalThis.SiteLibrary = Object.freeze({ inspect, watch, isMetadataHost, VIDEO_ID });
 })();

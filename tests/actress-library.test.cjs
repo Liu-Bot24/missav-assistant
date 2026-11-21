@@ -5,10 +5,10 @@ const vm = require('node:vm');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const context = vm.createContext({});
-for (const file of ['actress-data.js', 'actress-library.js']) {
+for (const file of ['text.js', 'actress-data.js', 'actress-library.js']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
 }
-const library = context.MissavActressLibrary;
+const library = context.ActressLibrary;
 
 test('同一演员五个中日文新旧名字仍只计一人', () => {
   const result = library.resolve(['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬']);
@@ -49,8 +49,8 @@ test('姓名数据来自固定版本的 Amane，保留可核验的原始来源',
   const source = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'third-party/amane/source.json'), 'utf8'));
   const xml = fs.readFileSync(path.join(__dirname, '..', 'third-party/amane/mapping_actor.xml'));
   assert.equal(source.repository, 'https://github.com/sqzw-x/amane');
-  assert.equal(context.MissavActressData.commit, source.commit);
-  assert.equal(context.MissavActressData.sha256, crypto.createHash('sha256').update(xml).digest('hex'));
+  assert.equal(context.ActressData.commit, source.commit);
+  assert.equal(context.ActressData.sha256, crypto.createHash('sha256').update(xml).digest('hex'));
 });
 
 test('姓名只做精确规范化匹配，不用子串匹配猜身份', () => {

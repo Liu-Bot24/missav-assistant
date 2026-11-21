@@ -8,7 +8,7 @@ const origin = 'https://fixture.example.test';
 const card = (id, badge = 'ordinary') => `<div data-id="${id}"><div class="thumbnail"><a href="/cn/${id}">Fixture ${id}</a><span class="bottom-1 left-1">${badge}</span></div></div>`;
 const markup = (cards, next = '') => `<!doctype html><meta charset="utf-8"><style>.hidden{display:none}.grid{display:grid;gap:8px}.thumbnail{padding:12px}</style><nav><a href="/cn/genres">Categories</a><a href="/cn/actresses">People</a></nav><div class="grid">${cards}</div>${next ? `<a rel="next" href="${next}">Next</a>` : ''}`;
 const nextHtml = markup(card('sample-003') + card('sample-004'));
-const isHidden = (page, id) => page.locator(`[data-id="${id}"]`).evaluate(el => el.classList.contains('missav-content-filter-hidden'));
+const isHidden = (page, id) => page.locator(`[data-id="${id}"]`).evaluate(el => el.classList.contains('viewing-assistant-hidden'));
 const only = process.argv[2];
 
 (async () => {
@@ -26,8 +26,8 @@ const only = process.argv[2];
     await page.goto(`${origin}/cn/new`);
     await page.addStyleTag({ path: path.join(root, 'content.css') });
     await page.evaluate(({ mode, responseHtml }) => {
-      window.fixtureSettings = { settingsStorage: 'local', enabled: true, homepageEnabled: true, infiniteScroll: false,
-        blockedPresets: ['uncensored'], genreIncludeRules: [], genreExcludeRules: [],
+      window.fixtureSettings = { settingsVersion: 2, enabled: true, homepageEnabled: true, infiniteScroll: false,
+        hiddenLabels: ['uncensored'], categoryIncludeRules: [], categoryExcludeRules: [],
         actressLimitEnabled: false, showActressNames: false };
       window.fixtureMetrics = { callbacks: 0, fetches: 0 };
       const Observer = window.MutationObserver;
@@ -60,7 +60,7 @@ const only = process.argv[2];
         return response;
       };
     }, { mode, responseHtml });
-    for (const script of ['site-library.js', 'label-library.js', 'genre-library.js', 'settings.js', 'metadata-client.js', 'content.js']) {
+    for (const script of ['text.js', 'site-library.js', 'label-library.js', 'category-library.js', 'settings.js', 'metadata-client.js', 'content.js']) {
       await page.addScriptTag({ path: path.join(root, script) });
     }
     await page.waitForSelector('[data-viewing-assistant]', { state: 'attached' });
@@ -71,9 +71,9 @@ const only = process.argv[2];
       // The site reuses a card node and only swaps its link or badge state.
       const page = await fixture();
       await page.locator('[data-id="sample-001"] a').evaluate(el => { el.href = '/cn/sample-001-uncensored-leak'; });
-      await page.waitForFunction(() => document.querySelector('[data-id="sample-001"]').classList.contains('missav-content-filter-hidden'), null, { timeout: 2000 });
+      await page.waitForFunction(() => document.querySelector('[data-id="sample-001"]').classList.contains('viewing-assistant-hidden'), null, { timeout: 2000 });
       await page.locator('[data-id="sample-001"] a').evaluate(el => { el.href = '/cn/sample-001'; });
-      await page.waitForFunction(() => !document.querySelector('[data-id="sample-001"]').classList.contains('missav-content-filter-hidden'), null, { timeout: 2000 });
+      await page.waitForFunction(() => !document.querySelector('[data-id="sample-001"]').classList.contains('viewing-assistant-hidden'), null, { timeout: 2000 });
       for (const attribute of ['class', 'hidden']) {
         await page.locator('[data-id="sample-001"] span').evaluate((el, attribute) => {
           el.textContent = 'uncensored';
@@ -86,7 +86,7 @@ const only = process.argv[2];
           if (attribute === 'class') el.classList.remove('hidden');
           if (attribute === 'hidden') el.hidden = false;
         }, attribute);
-        await page.waitForFunction(() => document.querySelector('[data-id="sample-001"]').classList.contains('missav-content-filter-hidden'), null, { timeout: 2000 });
+        await page.waitForFunction(() => document.querySelector('[data-id="sample-001"]').classList.contains('viewing-assistant-hidden'), null, { timeout: 2000 });
       }
       await page.waitForTimeout(1000); // Past the delayed load scan.
       const callbacks = await page.evaluate(() => fixtureMetrics.callbacks);
@@ -99,10 +99,10 @@ const only = process.argv[2];
       for (const mode of ['connection', 'body']) {
         const page = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002'), '/cn/archive/page2'), mode });
         await page.waitForFunction(() => fixtureMetrics.fetches === 1);
-        await page.waitForSelector('.missav-content-filter-retry', { timeout: 20000 });
+        await page.waitForSelector('.viewing-assistant-retry', { timeout: 20000 });
         assert.equal(await page.evaluate(() => lastPageSignal?.aborted), true, 'the stalled request is aborted');
         await page.evaluate(() => { fetchMode = 'ready'; });
-        await page.locator('.missav-content-filter-retry').click();
+        await page.locator('.viewing-assistant-retry').click();
         await page.waitForSelector('[data-id="sample-003"]', { timeout: 5000 });
         assert.equal(await page.evaluate(() => fixtureMetrics.fetches), 2);
         await page.close();
@@ -113,18 +113,18 @@ const only = process.argv[2];
       await late.evaluate(() => { changeFixtureSettings({ enabled: false }); releaseFetch(); });
       await late.waitForTimeout(150);
       assert.equal(await late.evaluate(() => lastPageSignal?.aborted), true, 'pausing cancels the request');
-      assert.equal(await late.locator('[data-missav-filter-refill]').count(), 0);
+      assert.equal(await late.locator('[data-viewing-assistant-refill]').count(), 0);
       await late.close();
       console.log('PASS pausing cancels a page request in flight');
     }
     if (!only || only === 'limit') {
       const page = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002', 'uncensored'), '/cn/archive/page2'), mode: 'chain' });
-      await page.waitForSelector('.missav-content-filter-retry', { timeout: 5000 });
-      assert.match(await page.locator('.missav-content-filter-retry').innerText(), /已往后查找 8 页.*继续查找/);
+      await page.waitForSelector('.viewing-assistant-retry', { timeout: 5000 });
+      assert.match(await page.locator('.viewing-assistant-retry').innerText(), /已往后查找 8 页.*继续查找/);
       assert.equal(await page.evaluate(() => fixtureMetrics.fetches), 8);
       await page.waitForTimeout(200);
       assert.equal(await page.evaluate(() => fixtureMetrics.fetches), 8, 'stops at the limit until asked');
-      await page.locator('.missav-content-filter-retry').click();
+      await page.locator('.viewing-assistant-retry').click();
       await page.waitForFunction(() => fixtureMetrics.fetches === 16, null, { timeout: 5000 });
       await page.close();
       console.log('PASS an empty page explains the page limit and continues on request');
@@ -137,7 +137,7 @@ const only = process.argv[2];
       assert.equal(await page.locator('[data-id="sample-003"] img').getAttribute('src'), `${origin}/cn/archive/cover.svg`);
       assert.equal(await page.locator('[data-id="sample-003"] img').getAttribute('srcset'), `${origin}/cn/small.svg 1x, ${origin}/cn/archive/large.svg 2x`);
       assert.equal(await page.locator('.unsafe').getAttribute('href'), null);
-      assert.equal(await page.locator('[data-missav-filter-refill]').count(), 1, 'the duplicate of a native card is skipped');
+      assert.equal(await page.locator('[data-viewing-assistant-refill]').count(), 1, 'the duplicate of a native card is skipped');
       await page.close();
       console.log('PASS imported cards resolve links against the page they came from');
     }

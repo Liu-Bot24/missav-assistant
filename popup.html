@@ -46,17 +46,17 @@
 
         <div class="rule-list">
           <label class="rule-row">
-            <input type="checkbox" name="preset" value="uncensored">
+            <input type="checkbox" name="hiddenLabel" value="uncensored">
             <span class="checkmark" aria-hidden="true"></span>
             <span><strong>无码影片</strong><small>自动识别各语言界面的同类标签</small></span>
           </label>
           <label class="rule-row">
-            <input type="checkbox" name="preset" value="chinese-subtitle">
+            <input type="checkbox" name="hiddenLabel" value="chinese-subtitle">
             <span class="checkmark" aria-hidden="true"></span>
             <span><strong>中文字幕</strong><small>隐藏带中文字幕标记的视频</small></span>
           </label>
           <label class="rule-row">
-            <input type="checkbox" name="preset" value="other-subtitle">
+            <input type="checkbox" name="hiddenLabel" value="other-subtitle">
             <span class="checkmark" aria-hidden="true"></span>
             <span><strong>其他字幕</strong><small>隐藏中文以外的字幕标记</small></span>
           </label>
@@ -68,61 +68,61 @@
         </div>
       </section>
 
-      <section class="panel genre-panel" aria-labelledby="genreTitle">
+      <section class="panel category-panel" aria-labelledby="categoryTitle">
         <div class="section-heading">
           <div>
-            <h2 id="genreTitle">分类条件</h2>
+            <h2 id="categoryTitle">分类条件</h2>
           </div>
-          <span id="genreCount">正在读取…</span>
+          <span id="categoryCount">正在读取…</span>
         </div>
-        <p id="genreExplainer" class="genre-explainer">按视频的内页分类筛选，隐藏条件优先。</p>
+        <p id="categoryExplainer" class="category-explainer">按视频的内页分类筛选，隐藏条件优先。</p>
 
-        <div class="genre-picker include-picker" data-picker="include">
-          <label for="genreIncludeSearch" class="genre-picker-label">
+        <div class="category-picker include-picker" data-picker="include">
+          <label for="categoryIncludeSearch" class="category-picker-label">
             <span>只显示这些分类</span>
             <small>留空表示不限制</small>
           </label>
-          <div id="genreIncludeField" class="genre-chip-field">
+          <div id="categoryIncludeField" class="category-chip-field">
             <input
-              id="genreIncludeSearch"
+              id="categoryIncludeSearch"
               type="search"
               placeholder="搜索并添加分类…"
               autocomplete="off"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded="false"
-              aria-controls="genreIncludeSuggestions"
+              aria-controls="categoryIncludeSuggestions"
             >
           </div>
-          <div id="genreIncludeSuggestions" class="genre-suggestions" role="listbox" hidden></div>
+          <div id="categoryIncludeSuggestions" class="category-suggestions" role="listbox" hidden></div>
         </div>
 
-        <div class="genre-picker exclude-picker" data-picker="exclude">
-          <label for="genreExcludeSearch" class="genre-picker-label">
+        <div class="category-picker exclude-picker" data-picker="exclude">
+          <label for="categoryExcludeSearch" class="category-picker-label">
             <span>隐藏这些分类</span>
             <small>命中即隐藏</small>
           </label>
-          <div id="genreExcludeField" class="genre-chip-field">
+          <div id="categoryExcludeField" class="category-chip-field">
             <input
-              id="genreExcludeSearch"
+              id="categoryExcludeSearch"
               type="search"
               placeholder="搜索并添加分类…"
               autocomplete="off"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded="false"
-              aria-controls="genreExcludeSuggestions"
+              aria-controls="categoryExcludeSuggestions"
             >
           </div>
-          <div id="genreExcludeSuggestions" class="genre-suggestions" role="listbox" hidden></div>
+          <div id="categoryExcludeSuggestions" class="category-suggestions" role="listbox" hidden></div>
         </div>
       </section>
 
       <section class="panel actress-panel" aria-labelledby="actressTitle">
         <div class="section-heading">
-          <h2 id="actressTitle">女优筛选</h2>
+          <h2 id="actressTitle">女优</h2>
         </div>
-        <p id="actressExplainer" class="genre-explainer">同一演员的不同名字合并计数。</p>
+        <p id="actressExplainer" class="category-explainer">同一演员的不同名字合并计数。</p>
         <div class="actress-control">
           <label class="actress-toggle" for="actressLimitEnabled">
             <span>按人数隐藏</span>
@@ -167,8 +167,9 @@
       <button id="resetButton" type="button">恢复默认</button>
     </footer>
 
+    <script src="text.js"></script>
     <script src="label-library.js"></script>
-    <script src="genre-library.js"></script>
+    <script src="category-library.js"></script>
     <script src="settings.js"></script>
     <script src="popup.js"></script>
   </body>

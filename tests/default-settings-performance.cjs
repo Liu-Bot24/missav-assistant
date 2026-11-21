@@ -28,17 +28,17 @@ async function run(browser, count) {
           genres: ["中出し"], tags: [], type: "jav", duration: 7000, actresses: ["A", "B"],
           cast: { names: ["A", "B"], confirmedCount: 2, people: [], unresolved: [], complete: true } }])) }), 40);
       } },
-      storage: { local: { get(_keys, callback) { callback({ settingsStorage: "local" }); } }, onChanged: { addListener() {} } }
+      storage: { local: { get(_keys, callback) { callback({ settingsVersion: 2 }); } }, onChanged: { addListener() {} } }
     };
   }, count);
-  for (const file of ["site-library.js", "label-library.js", "genre-library.js", "settings.js", "metadata-client.js"]) {
+  for (const file of ["text.js", "site-library.js", "label-library.js", "category-library.js", "settings.js", "metadata-client.js"]) {
     await page.addScriptTag({ content: read(file) });
   }
   const result = await page.evaluate(async (source) => {
     const start = performance.now();
     (0, eval)(source);
     await new Promise((resolve) => {
-      const tick = () => document.querySelector(".missav-content-filter-pending") ? setTimeout(tick, 5) : resolve();
+      const tick = () => document.querySelector(".viewing-assistant-pending") ? setTimeout(tick, 5) : resolve();
       setTimeout(tick, 5);
     });
     const settleMs = performance.now() - start;

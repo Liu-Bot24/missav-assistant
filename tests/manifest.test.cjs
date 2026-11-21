@@ -5,13 +5,14 @@ const test = require("node:test");
 
 const root = path.join(__dirname, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const packageInfo = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 test("Manifest V3 正确连接设置弹窗与存储权限", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "观看小助手");
-  assert.equal(manifest.version, "1.0.1");
+  assert.equal(manifest.version, packageInfo.version, "扩展与项目版本一致");
   assert.equal(manifest.action.default_popup, "popup.html");
-  assert.deepEqual(manifest.content_scripts[0].js, ["site-library.js", "label-library.js", "genre-library.js", "settings.js", "metadata-client.js", "content.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["text.js", "site-library.js", "label-library.js", "category-library.js", "settings.js", "metadata-client.js", "content.js"]);
   assert.deepEqual(manifest.permissions, ["storage"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://client-rapi-missav.recombee.com/*"
@@ -35,6 +36,7 @@ test("Manifest 引用的本地资源全部存在", () => {
     "popup.css",
     "popup.js",
     "settings.js",
+    "text.js",
     "actress-data.js",
     "actress-library.js",
     "third-party/amane/LICENSE",
@@ -51,19 +53,20 @@ test("设置弹窗不包含远程资源或内联脚本", () => {
   const html = fs.readFileSync(path.join(root, "popup.html"), "utf8");
   assert.doesNotMatch(html, /https?:\/\//i);
   assert.doesNotMatch(html, /<script(?:\s[^>]*)?>\s*[^<\s]/i);
-  assert.match(html, /<script src="genre-library\.js"><\/script>/);
+  assert.match(html, /<script src="category-library\.js"><\/script>/);
   assert.match(html, /<script src="popup\.js"><\/script>/);
   assert.match(html, /<script src="label-library\.js"><\/script>/);
   assert.match(html, /<script src="settings\.js"><\/script>/);
+  assert.ok(html.indexOf('src="text.js"') < html.indexOf('src="label-library.js"'));
   assert.ok(html.indexOf('src="settings.js"') < html.indexOf('src="popup.js"'));
   assert.match(html, /value="other-subtitle"/);
   assert.doesNotMatch(html, /customForm|customLabel/);
   assert.match(html, /id="infiniteScroll"/);
-  assert.match(html, /id="genreIncludeField"/);
-  assert.match(html, /id="genreIncludeSuggestions"/);
-  assert.match(html, /id="genreExcludeField"/);
-  assert.match(html, /id="genreExcludeSuggestions"/);
-  assert.doesNotMatch(html, /id="genreLibraryList"/);
+  assert.match(html, /id="categoryIncludeField"/);
+  assert.match(html, /id="categoryIncludeSuggestions"/);
+  assert.match(html, /id="categoryExcludeField"/);
+  assert.match(html, /id="categoryExcludeSuggestions"/);
+  assert.doesNotMatch(html, /id="categoryLibraryList"/);
   assert.match(html, />只显示这些分类</);
   assert.match(html, />隐藏这些分类</);
 });
