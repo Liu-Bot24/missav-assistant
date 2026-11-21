@@ -28,7 +28,7 @@ const only = process.argv[2];
       window.fixtureSettings = { settingsVersion: 2, enabled: true, homepageEnabled: true, infiniteScroll: false,
         hiddenLabels: ['uncensored'], categoryIncludeRules: [], categoryExcludeRules: [],
         actressLimitEnabled: false, showActressNames: false, ...settings };
-      window.fixtureMetrics = { callbacks: 0, fetches: 0 };
+      window.fixtureMetrics = { callbacks: 0, fetches: 0, urls: [] };
       const Observer = window.MutationObserver;
       window.MutationObserver = class extends Observer {
         constructor(callback) { super((mutations, observer) => { fixtureMetrics.callbacks++; callback(mutations, observer); }); }
@@ -46,7 +46,9 @@ const only = process.argv[2];
       window.fetchMode = mode;
       window.fetch = async (_url, options = {}) => {
         fixtureMetrics.fetches++;
+        fixtureMetrics.urls.push(String(_url));
         window.lastPageSignal = options.signal ?? null;
+        if (window.failFetchNumber === fixtureMetrics.fetches) return { ok: false, status: 503, url: _url, text: async () => '' };
         const response = { ok: true, url: _url, text: async () => responseHtml };
         if (fetchMode === 'chain') {
           // Every following page holds only hidden cards and links one page further.
@@ -141,6 +143,36 @@ const only = process.argv[2];
       await page.waitForFunction(() => fixtureMetrics.fetches === 16, null, { timeout: 5000 });
       await page.close();
       console.log('PASS an empty page explains the page limit and continues on request');
+
+      // After continuing, a failed page is retried from where it failed.
+      const failing = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002', 'uncensored'), '/cn/archive/page2'), mode: 'chain' });
+      await failing.waitForSelector('.viewing-assistant-retry', { timeout: 5000 });
+      await failing.evaluate(() => { window.failFetchNumber = 11; });
+      await failing.locator('.viewing-assistant-retry').click();
+      await failing.waitForFunction(() => fixtureMetrics.fetches === 11, null, { timeout: 5000 });
+      await failing.waitForFunction(() => /未能加载/.test(document.querySelector('.viewing-assistant-retry')?.textContent ?? ''), null, { timeout: 5000 });
+      await failing.locator('.viewing-assistant-retry').click();
+      await failing.waitForFunction(() => fixtureMetrics.fetches >= 12, null, { timeout: 5000 });
+      const urls = await failing.evaluate(() => fixtureMetrics.urls);
+      assert.equal(urls[11], urls[10], 'the retry asks for the page that failed');
+      await failing.close();
+      console.log('PASS a failed page after continuing is retried from that page');
+
+      // The site switches to another list without reloading the document.
+      const spa = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002', 'uncensored'), '/cn/archive/page2'), mode: 'chain' });
+      await spa.waitForSelector('.viewing-assistant-retry', { timeout: 5000 });
+      await spa.evaluate(() => {
+        fetchMode = 'ready';
+        history.pushState(null, '', '/cn/other');
+        document.querySelector('div.grid').innerHTML = `<div data-id="other-001"><div class="thumbnail"><a href="/cn/other-001">O</a><span class="bottom-1 left-1">uncensored</span></div></div><div data-id="other-002"><div class="thumbnail"><a href="/cn/other-002">O</a><span class="bottom-1 left-1">ordinary</span></div></div>`;
+        document.querySelector('a[rel="next"]').setAttribute('href', '/cn/other/page2');
+      });
+      await spa.waitForSelector('[data-id="sample-003"]', { timeout: 5000 });
+      const spaUrls = await spa.evaluate(() => fixtureMetrics.urls);
+      assert.match(spaUrls.at(-1), /\/cn\/other\/page2$/, 'the new list continues from its own next page');
+      assert.equal(await spa.locator('.viewing-assistant-retry').count(), 0, 'the old list notice is gone');
+      await spa.close();
+      console.log('PASS switching lists in the same document drops the old list work');
     }
     if (!only || only === 'import') {
       const relative = markup(`<div><div class="thumbnail"><a href="../sample-002">Duplicate</a><span class="bottom-1 left-1">ordinary</span></div></div><div data-id="sample-003"><div class="thumbnail"><a href="../sample-003">Relative</a><span class="bottom-1 left-1">ordinary</span><img data-src="./cover.svg" data-srcset="../small.svg 1x, ./large.svg 2x"><a class="unsafe" href="javascript:alert(1)">Unsafe</a></div></div>`);

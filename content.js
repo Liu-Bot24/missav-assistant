@@ -679,11 +679,31 @@
     scheduleScan();
   }
 
+  // Work started for one list must not reach another list the site shows in
+  // the same document.
+  function forgetListWork() {
+    cancelPageRequests();
+    paginationRunKey = null;
+    paginationResumeUrl = null;
+    paginationNeedsRetry = false;
+    paginationTask = null;
+    stalledPageIds.clear();
+    filterRevision += 1;
+    topologyRevision += 1;
+  }
+
   function filterCurrentDocument() {
     let cards = [...document.querySelectorAll("div.thumbnail")];
-    if (fullScanPending || lastScannedUrl !== location.href) {
+    const listUrl = location.href.split("#")[0];
+    if (lastScannedUrl !== null && lastScannedUrl !== listUrl) {
+      forgetListWork();
+      teardownInfiniteScroll();
+      removeRefillItems();
+      cards = [...document.querySelectorAll("div.thumbnail")];
+    }
+    if (fullScanPending || lastScannedUrl !== listUrl) {
       fullScanPending = false;
-      lastScannedUrl = location.href;
+      lastScannedUrl = listUrl;
       changedMetadataIds.clear();
     } else {
       const ids = new Set(changedMetadataIds);
@@ -1101,7 +1121,8 @@
       visitedPages.add(nextPageUrl);
       const page = await fetchPageDocument(nextPageUrl);
       if (revision !== filterRevision || location.href !== basePageUrl) return;
-      if (!page) { paginationNeedsRetry = true; return; }
+      // A retry continues from the page that failed, not from the first page.
+      if (!page) { paginationResumeUrl = nextPageUrl; paginationNeedsRetry = true; return; }
 
       const result = await processPageEntries(
         getGridItems(page.grid),
@@ -1118,6 +1139,7 @@
       if (result.cancelled) return;
       if (result.unresolved.length > 0 && visibleCount < targetSize) {
         for (const id of result.unresolved) stalledPageIds.add(id);
+        paginationResumeUrl = nextPageUrl;
         paginationNeedsRetry = true;
         return;
       }
@@ -1559,15 +1581,8 @@
         requestFullScan();
         return;
       }
-      cancelPageRequests();
       metadataClient.invalidateUnresolved();
-      paginationRunKey = null;
-      paginationResumeUrl = null;
-      paginationNeedsRetry = false;
-      paginationTask = null;
-      stalledPageIds.clear();
-      filterRevision += 1;
-      topologyRevision += 1;
+      forgetListWork();
       if (!isFilteringActive()) {
         restoreUnfilteredPage();
         return;
