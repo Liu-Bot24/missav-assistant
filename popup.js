@@ -400,7 +400,8 @@
         picker.input.blur();
         return;
       }
-      if (event.key !== "Enter") return;
+      // The Enter that confirms input-method text is not a choice.
+      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
       const first = matchingCategoryOptions(mode, categoryOptions())[0];
       if (!first) return;
       event.preventDefault();

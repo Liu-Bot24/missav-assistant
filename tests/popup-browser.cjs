@@ -182,6 +182,8 @@ const root = path.join(__dirname, '..');
     await many.locator('#categoryIncludeSearch').fill('エステマッサージ');
     assert.match(await suggestions.first().textContent(), /美容按摩/, "the site's spelling without the separator finds the category");
     const chips = many.locator('#categoryIncludeField .selected-category-chip');
+    await many.locator('#categoryIncludeSearch').dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+    assert.equal(await chips.count(), 0, 'the Enter that confirms input-method text adds nothing');
     await many.locator('#categoryIncludeSearch').fill('ベスト、総集編');
     await many.locator('#categoryIncludeSearch').press('Enter');
     assert.equal((await chips.first().textContent()).replace('×', ''), '合集', 'Enter picks the category whose full name was typed');
