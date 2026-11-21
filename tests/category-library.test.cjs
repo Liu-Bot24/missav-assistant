@@ -111,6 +111,8 @@ test("中文名也能认出分类：旧规则与两种写法合为一项", () =>
 test("分隔符只在识别已知分类时忽略，未知分类保留原样区分", () => {
   const library = loadLibrary();
   assert.equal(library.matches(library.valueRule("3P/4P"), ["3P・4P"]), true);
+  assert.equal(library.matches(library.valueRule("エステ・マッサージ"), ["エステマッサージ"]), true, "不带分隔符的写法也认得已知分类");
+  assert.equal(library.matches(library.valueRule("エステマッサージ"), ["美容按摩"]), true);
   assert.equal(library.matches(library.valueRule("1/2"), ["12"]), false);
   assert.notEqual(library.conceptKey("1/2"), library.conceptKey("12"));
   assert.equal(library.matches(library.valueRule("69"), ["6/9"]), false, "未登记的写法不靠去掉分隔符并入已知分类");
