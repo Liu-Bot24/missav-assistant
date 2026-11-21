@@ -2,7 +2,7 @@
 // Neutral fixtures only: every request is fulfilled locally or aborted.
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { launch } = require('./browser.cjs');
 const root = path.join(__dirname, '..');
 const origin = 'https://fixture.example.test';
 const card = (id, badge = 'ordinary') => `<div data-id="${id}"><div class="thumbnail"><a href="/cn/${id}">Fixture ${id}</a><span class="bottom-1 left-1">${badge}</span></div></div>`;
@@ -12,8 +12,7 @@ const isHidden = (page, id) => page.locator(`[data-id="${id}"]`).evaluate(el => 
 const only = process.argv[2];
 
 (async () => {
-  const browser = await chromium.launch({ headless: true,
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
+  const browser = await launch();
   const errors = [];
   async function fixture({ html = markup(card('sample-001') + card('sample-002')), mode = 'ready', responseHtml = nextHtml } = {}) {
     const page = await browser.newPage();

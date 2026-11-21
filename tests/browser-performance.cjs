@@ -1,10 +1,8 @@
-// Optional browser integration check. Set PLAYWRIGHT_MODULE and, if needed,
-// CHROMIUM_EXECUTABLE to an existing local Playwright/Chromium installation.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { launch } = require('./browser.cjs');
 const root = path.join(__dirname, "..");
 const library = fs.readFileSync(path.join(root, "category-library.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "content.css"), "utf8");
@@ -125,8 +123,7 @@ async function measure(browser, source, count) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true,
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
+  const browser = await launch();
   try {
     const results = [];
     for (const count of process.argv.includes("home") ? [] : [300, 1000]) {

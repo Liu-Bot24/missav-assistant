@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { launchWithProfile, withExtension } = require('./browser.cjs');
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'output', 'actress-browser');
 fs.mkdirSync(out, { recursive: true });
@@ -37,12 +37,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
   !!document.querySelector('.viewing-assistant-names'));
 
 (async () => {
-  const profile = fs.mkdtempSync(path.join(out, 'profile-'));
-  const context = await chromium.launchPersistentContext(profile, {
-    headless: true, viewport: { width: 1440, height: 900 },
-    args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
-  });
+  const context = await launchWithProfile(withExtension(root, { viewport: { width: 1440, height: 900 } }));
   try {
     const errors = [];
     const unexpectedRequests = [];

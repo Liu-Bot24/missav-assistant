@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { launch } = require('./browser.cjs');
 const root = path.join(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
@@ -56,8 +56,7 @@ async function run(browser, count) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true,
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
+  const browser = await launch();
   try {
     for (const count of [60, 300, 1000]) {
       const result = await run(browser, count);

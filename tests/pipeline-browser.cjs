@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { launchWithProfile, withExtension } = require('./browser.cjs');
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'output', 'pipeline-browser');
 
@@ -19,11 +19,7 @@ function markup(ids, next = null) {
 
 (async () => {
   fs.mkdirSync(out, { recursive: true });
-  const context = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(out, 'profile-')), {
-    headless: true, viewport: { width: 1200, height: 700 },
-    args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
-  });
+  const context = await launchWithProfile(withExtension(root, { viewport: { width: 1200, height: 700 } }));
   try {
     const errors = [];
     const pageRequests = [];

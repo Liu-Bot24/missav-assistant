@@ -11,6 +11,10 @@
     "test:pipeline": "node tests/pipeline-browser.cjs",
     "test:templates": "node tests/template-browser.cjs",
     "test:dynamic-pages": "node tests/dynamic-pages-browser.cjs",
-    "test:default-performance": "node tests/default-settings-performance.cjs"
+    "test:default-performance": "node tests/default-settings-performance.cjs",
+    "test:browser:all": "node tests/browser-performance.cjs && node tests/default-settings-performance.cjs && node tests/popup-browser.cjs && node tests/category-picker-browser.cjs && node tests/actress-browser.cjs && node tests/pipeline-browser.cjs && node tests/template-browser.cjs && node tests/dynamic-pages-browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
   }
 }

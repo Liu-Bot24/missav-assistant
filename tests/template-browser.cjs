@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { launchWithProfile, withExtension } = require('./browser.cjs');
 const root = path.join(__dirname, '..');
 const out = path.join(root, 'output', 'template-browser');
 fs.mkdirSync(out, { recursive: true });
@@ -16,12 +16,7 @@ ${more ? '<button id="more" @click.prevent="loadMore(0)">Load more</button>' : '
 ${next ? '<a rel="next" href="?page=2">Next</a>' : ''}</main>`;
 const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.filter(card => getComputedStyle(card).display !== 'none').length);
 (async () => {
-  const profile = fs.mkdtempSync(path.join(out, 'profile-'));
-  const context = await chromium.launchPersistentContext(profile, {
-    headless: true, viewport: { width: 900, height: 650 },
-    args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`],
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {})
-  });
+  const context = await launchWithProfile(withExtension(root, { viewport: { width: 900, height: 650 } }));
   try {
     const errors = [];
     let metadataRequests = 0;

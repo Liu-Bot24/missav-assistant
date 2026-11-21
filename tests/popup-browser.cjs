@@ -2,11 +2,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { launch } = require('./browser.cjs');
 const root = path.join(__dirname, '..');
 (async () => {
-  const browser = await chromium.launch({ headless: true,
-    ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
+  const browser = await launch();
   try {
     const page = await browser.newPage({ viewport: { width: 380, height: 600 } });
     const errors = [];
