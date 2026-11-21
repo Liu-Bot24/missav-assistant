@@ -30,7 +30,10 @@
   const OWN_CLASSES = new Set([HIDDEN_CLASS, LABEL_HIDDEN_CLASS, GENRE_HIDDEN_CLASS,
     ACTRESS_NAMES_CLASS, ACTRESS_HOST_CLASS, PENDING_CLASS, UNVERIFIED_CLASS,
     SETTLING_GRID_CLASS, BUSY_CONTROL_CLASS]);
+  const PAGE_REQUEST_TIMEOUT_MS = 15000;
+  const MAX_CACHED_PAGES = MAX_REFILL_PAGES * 2;
   const pageHtmlCache = new Map();
+  const pageRequests = new Set();
   const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
   metadataClient.subscribe(() => scheduleScan());
   const metadataNotices = new Map();
@@ -913,23 +916,114 @@
     applyCardMetadata(importedCard, getCardItemId(importedCard, baseUrl));
   }
 
-  async function fetchPageDocument(url) {
-    let html = pageHtmlCache.get(url);
+  function resolveImportedUrl(value, baseUrl, sameOrigin = false) {
+    try {
+      const url = new URL(value, baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) return null;
+      if (sameOrigin && url.origin !== new URL(baseUrl).origin) return null;
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
 
-    if (!html) {
-      try {
-        const response = await fetch(url, { credentials: "same-origin" });
-        if (!response.ok) return null;
-        html = await response.text();
-      } catch {
-        return null;
+  function resolveSourceSet(value, baseUrl) {
+    // Candidates are "url [descriptor]" separated by commas; a URL may itself
+    // contain commas, so split on the comma that follows a descriptor.
+    const candidates = [];
+    let rest = String(value);
+    while (rest) {
+      rest = rest.replace(/^[\s,]+/, "");
+      if (!rest) break;
+      let url = /^\S+/.exec(rest)[0];
+      rest = rest.slice(url.length);
+      let descriptor = "";
+      if (url.endsWith(",")) {
+        url = url.replace(/,+$/, "");
+      } else {
+        const separator = rest.indexOf(",");
+        descriptor = (separator < 0 ? rest : rest.slice(0, separator)).trim();
+        rest = separator < 0 ? "" : rest.slice(separator + 1);
+      }
+      const resolved = resolveImportedUrl(url, baseUrl);
+      const validDescriptor = !descriptor || /^[1-9]\d*w$/.test(descriptor) ||
+        (/^(?:\d+(?:\.\d+)?|\.\d+)x$/.test(descriptor) && Number.parseFloat(descriptor) > 0);
+      if (resolved && validDescriptor) candidates.push(resolved + (descriptor ? ` ${descriptor}` : ""));
+    }
+    return candidates.join(", ");
+  }
+
+  // Imported cards are moved into this page, so relative links would otherwise
+  // resolve against the wrong directory. Links stay on the same site.
+  function normalizeImportedUrls(root, baseUrl) {
+    for (const node of [root, ...root.querySelectorAll("*")]) {
+      for (const attribute of ["href", "src", "data-src", "poster"]) {
+        if (!node.hasAttribute(attribute)) continue;
+        const value = resolveImportedUrl(node.getAttribute(attribute), baseUrl, attribute === "href");
+        if (value) node.setAttribute(attribute, value);
+        else node.removeAttribute(attribute);
+      }
+      for (const attribute of ["srcset", "data-srcset"]) {
+        if (!node.hasAttribute(attribute)) continue;
+        const value = resolveSourceSet(node.getAttribute(attribute), baseUrl);
+        if (value) node.setAttribute(attribute, value);
+        else node.removeAttribute(attribute);
       }
     }
+  }
 
-    const parsed = new DOMParser().parseFromString(html, "text/html");
-    if (!MissavSiteLibrary.inspect(parsed, url).compatible || !findPaginatedGrid(parsed)) return null;
-    pageHtmlCache.set(url, html);
-    return parsed;
+  function cancelPageRequests() {
+    for (const controller of pageRequests) controller.abort();
+    pageRequests.clear();
+  }
+
+  function rememberPage(url, page) {
+    pageHtmlCache.delete(url);
+    pageHtmlCache.set(url, page);
+    while (pageHtmlCache.size > MAX_CACHED_PAGES) {
+      pageHtmlCache.delete(pageHtmlCache.keys().next().value);
+    }
+  }
+
+  async function downloadPage(url) {
+    const controller = new AbortController();
+    pageRequests.add(controller);
+    const timer = setTimeout(() => controller.abort(), PAGE_REQUEST_TIMEOUT_MS);
+    const aborted = new Promise((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+    try {
+      // The deadline covers both the response headers and the body.
+      const response = await Promise.race([
+        fetch(url, { credentials: "same-origin", signal: controller.signal }), aborted
+      ]);
+      if (!response.ok) return null;
+      const sourceUrl = resolveImportedUrl(response.url || url, url, true);
+      if (!sourceUrl) return null;
+      const html = await Promise.race([response.text(), aborted]);
+      return { html, sourceUrl };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      pageRequests.delete(controller);
+    }
+  }
+
+  // Returns the parsed page and the URL its relative links resolve against.
+  async function fetchPageDocument(url) {
+    const revision = filterRevision;
+    const page = pageHtmlCache.get(url) ?? await downloadPage(url);
+    if (!page || revision !== filterRevision) return null;
+
+    const parsed = new DOMParser().parseFromString(page.html, "text/html");
+    const grid = findPaginatedGrid(parsed);
+    if (!MissavSiteLibrary.inspect(parsed, page.sourceUrl).compatible || !grid) return null;
+    const baseHref = parsed.querySelector("base[href]")?.getAttribute("href");
+    const baseUrl = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl, true)) || page.sourceUrl;
+    for (const { item } of getGridItems(grid)) normalizeImportedUrls(item, baseUrl);
+    rememberPage(url, page);
+    return { document: parsed, grid, baseUrl };
   }
 
   async function refillPaginatedGrid(revision) {
@@ -970,22 +1064,19 @@
       }
 
       visitedPages.add(nextPageUrl);
-      const pageDocument = await fetchPageDocument(nextPageUrl);
-      if (revision !== filterRevision) return;
-      if (!pageDocument) { paginationNeedsRetry = true; return; }
-
-      const sourceGrid = findPaginatedGrid(pageDocument);
-      if (!sourceGrid) { paginationNeedsRetry = true; return; }
+      const page = await fetchPageDocument(nextPageUrl);
+      if (revision !== filterRevision || location.href !== basePageUrl) return;
+      if (!page) { paginationNeedsRetry = true; return; }
 
       const result = await processPageEntries(
-        getGridItems(sourceGrid),
-        nextPageUrl,
+        getGridItems(page.grid),
+        page.baseUrl,
         revision,
         ({ item, card }) => {
           if (visibleCount >= targetSize) return;
-          const cardKey = getCardKey(card, nextPageUrl);
+          const cardKey = getCardKey(card, page.baseUrl);
           if (cardKey && seenCardKeys.has(cardKey)) return;
-          appendImportedItem(grid, item, nextPageUrl);
+          appendImportedItem(grid, item, page.baseUrl);
           if (cardKey) seenCardKeys.add(cardKey);
           visibleCount += 1;
         }
@@ -997,7 +1088,7 @@
         return;
       }
 
-      nextPageUrl = getNextPageUrl(pageDocument, nextPageUrl);
+      nextPageUrl = getNextPageUrl(page.document, page.baseUrl);
     }
   }
 
@@ -1059,31 +1150,24 @@
         if (revision !== filterRevision || !settings.infiniteScroll) return;
 
         const pageUrl = infiniteNextPageUrl;
-        const pageDocument = await fetchPageDocument(pageUrl);
+        const page = await fetchPageDocument(pageUrl);
         if (revision !== filterRevision || infiniteLoadToken !== loadToken) return;
-        if (!pageDocument) {
+        if (!page) {
           setInfiniteStatus("加载失败，点击这里重试", "error");
           infiniteNeedsRetry = true;
           return;
         }
 
         checkedPages += 1;
-        const sourceGrid = findPaginatedGrid(pageDocument);
-        const nextPageUrl = getNextPageUrl(pageDocument, pageUrl);
-        if (!sourceGrid) {
-          setInfiniteStatus("下一页内容未能识别，点击重试", "error");
-          infiniteNeedsRetry = true;
-          return;
-        }
-
+        const nextPageUrl = getNextPageUrl(page.document, page.baseUrl);
         const result = await processPageEntries(
-          getGridItems(sourceGrid),
-          pageUrl,
+          getGridItems(page.grid),
+          page.baseUrl,
           revision,
           ({ item, card }) => {
-            const cardKey = getCardKey(card, pageUrl);
+            const cardKey = getCardKey(card, page.baseUrl);
             if (cardKey && infiniteSeenCardKeys.has(cardKey)) return;
-            appendImportedItem(infiniteGrid, item, pageUrl);
+            appendImportedItem(infiniteGrid, item, page.baseUrl);
             if (cardKey) infiniteSeenCardKeys.add(cardKey);
             appendedCount += 1;
           }
@@ -1170,6 +1254,7 @@
   }
 
   function restoreUnfilteredPage() {
+    cancelPageRequests();
     teardownInfiniteScroll();
     removeRefillItems();
     for (const grid of document.querySelectorAll("div.grid")) {
@@ -1417,6 +1502,7 @@
         scheduleScan();
         return;
       }
+      cancelPageRequests();
       metadataClient.invalidateUnresolved();
       paginationRunKey = null;
       paginationNeedsRetry = false;

@@ -343,6 +343,8 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     IntersectionObserver: FakeIntersectionObserver,
     queueMicrotask,
     URL,
+    AbortController,
+    clearTimeout() {},
     location: { href: runtimeOptions.url ?? "https://missav.ai/new?page=1" },
     fetch: async (url) => {
       fetchCalls.push(url);

@@ -9,6 +9,7 @@
     "test:genre-picker": "node tests/genre-picker-browser.cjs",
     "test:actresses": "node tests/actress-browser.cjs",
     "test:pipeline": "node tests/pipeline-browser.cjs",
-    "test:templates": "node tests/template-browser.cjs"
+    "test:templates": "node tests/template-browser.cjs",
+    "test:dynamic-pages": "node tests/dynamic-pages-browser.cjs"
   }
 }
