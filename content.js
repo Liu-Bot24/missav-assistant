@@ -942,11 +942,11 @@
     applyCardMetadata(importedCard, getCardItemId(importedCard, baseUrl));
   }
 
-  function resolveImportedUrl(value, baseUrl, sameOrigin = false) {
+  function resolveImportedUrl(value, baseUrl, requiredOrigin = null) {
     try {
       const url = new URL(value, baseUrl);
       if (!["http:", "https:"].includes(url.protocol)) return null;
-      if (sameOrigin && url.origin !== new URL(baseUrl).origin) return null;
+      if (requiredOrigin && url.origin !== requiredOrigin) return null;
       return url.href;
     } catch {
       return null;
@@ -981,11 +981,13 @@
 
   // Imported cards are moved into this page, so relative links would otherwise
   // resolve against the wrong directory. Links stay on the same site.
-  function normalizeImportedUrls(root, baseUrl) {
+  // Everything resolves against the source document's base, as the browser
+  // would; links must stay on the source page's site, media may not.
+  function normalizeImportedUrls(root, baseUrl, pageOrigin) {
     for (const node of [root, ...root.querySelectorAll("*")]) {
       for (const attribute of ["href", "src", "data-src", "poster"]) {
         if (!node.hasAttribute(attribute)) continue;
-        const value = resolveImportedUrl(node.getAttribute(attribute), baseUrl, attribute === "href");
+        const value = resolveImportedUrl(node.getAttribute(attribute), baseUrl, attribute === "href" ? pageOrigin : null);
         if (value) node.setAttribute(attribute, value);
         else node.removeAttribute(attribute);
       }
@@ -1024,7 +1026,7 @@
         fetch(url, { credentials: "same-origin", signal: controller.signal }), aborted
       ]);
       if (!response.ok) return null;
-      const sourceUrl = resolveImportedUrl(response.url || url, url, true);
+      const sourceUrl = resolveImportedUrl(response.url || url, url, new URL(url, location.href).origin);
       if (!sourceUrl) return null;
       const html = await Promise.race([response.text(), aborted]);
       return { html, sourceUrl };
@@ -1046,8 +1048,10 @@
     const grid = findPaginatedGrid(parsed);
     if (!SiteLibrary.inspect(parsed, page.sourceUrl).compatible || !grid) return null;
     const baseHref = parsed.querySelector("base[href]")?.getAttribute("href");
-    const baseUrl = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl, true)) || page.sourceUrl;
-    for (const { item } of getGridItems(grid)) normalizeImportedUrls(item, baseUrl);
+    const pageOrigin = new URL(page.sourceUrl).origin;
+    const documentBase = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl)) || page.sourceUrl;
+    const baseUrl = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl, pageOrigin)) || page.sourceUrl;
+    for (const { item } of getGridItems(grid)) normalizeImportedUrls(item, documentBase, pageOrigin);
     rememberPage(url, page);
     return { document: parsed, grid, baseUrl };
   }

@@ -139,6 +139,17 @@ const only = process.argv[2];
       assert.equal(await page.locator('[data-viewing-assistant-refill]').count(), 1, 'the duplicate of a native card is skipped');
       await page.close();
       console.log('PASS imported cards resolve links against the page they came from');
+
+      // A source page whose base points to a media host: covers follow it, links stay on the site.
+      const cdn = markup(`<div data-id="sample-007"><div class="thumbnail"><a href="${origin}/cn/sample-007">Cdn</a><span class="bottom-1 left-1">ordinary</span><img src="cover.svg"><a class="away" href="elsewhere">Away</a></div></div>`)
+        .replace('<meta charset="utf-8">', '<meta charset="utf-8"><base href="https://media.example.test/assets/">');
+      const based = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002'), '/cn/archive/page2'), responseHtml: cdn });
+      await based.waitForSelector('[data-id="sample-007"]', { timeout: 5000 });
+      assert.equal(await based.locator('[data-id="sample-007"] img').getAttribute('src'), 'https://media.example.test/assets/cover.svg');
+      assert.equal(await based.locator('[data-id="sample-007"] a').first().getAttribute('href'), `${origin}/cn/sample-007`);
+      assert.equal(await based.locator('.away').getAttribute('href'), null, 'a link resolved off the site is dropped');
+      await based.close();
+      console.log('PASS imported covers follow a base on another host');
     }
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
