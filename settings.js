@@ -83,28 +83,50 @@
     return next;
   }
 
-  // Moves earlier preferences to the current names, once. Settings already in
-  // local storage win over the sync copy. The sync copy is left in place:
-  // removing it would also reset other devices, so that is the user's decision.
+  // Whether this context has seen the preferences under the current version,
+  // and what it last loaded. Until migration succeeds, saving writes only the
+  // preferences the user changed, so values not yet migrated are not replaced
+  // by defaults.
+  let migrated = false;
+  let baseline = null;
+  const changedBeforeMigration = new Set();
+
+  // Moves earlier preferences to the current names, once. For each preference,
+  // a current local value wins over an earlier local value, which wins over the
+  // sync copy. The sync copy is left in place: removing it would also reset
+  // other devices, so that is the user's decision. The callback receives
+  // whether the preferences are now under the current version.
   function migrate(callback = () => {}) {
     const storage = api();
-    if (!storage?.local) { callback(); return; }
-    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER])], (local) => {
-      if (lastError()) { callback(); return; }
+    if (!storage?.local) { callback(false); return; }
+    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY])], (local) => {
+      if (lastError()) { callback(false); return; }
+      if (local?.[VERSION_KEY] === VERSION) { callback(true); return; }
       const finish = (synced) => {
         const merged = upgradeValues({ ...synced, ...pickLegacy(local), ...pickSettings(local) });
         const obsolete = [...Object.values(LEGACY_NAMES), LEGACY_LOCAL_MARKER]
           .filter((key) => Object.hasOwn(local ?? {}, key));
-        storage.local.set({ ...pickSettings(merged), [VERSION_KEY]: VERSION }, () => {
-          if (lastError() || obsolete.length === 0) { callback(); return; }
-          storage.local.remove(obsolete, () => callback());
+        // Another page or the background may have finished first; its result,
+        // and anything saved since, must not be overwritten with this snapshot.
+        storage.local.get([...KEYS, VERSION_KEY], (current) => {
+          if (lastError()) { callback(false); return; }
+          if (current?.[VERSION_KEY] === VERSION) { callback(true); return; }
+          storage.local.set({ ...pickSettings(merged), ...pickSettings(current), [VERSION_KEY]: VERSION }, () => {
+            if (lastError()) { callback(false); return; }
+            if (obsolete.length === 0) { callback(true); return; }
+            storage.local.remove(obsolete, () => callback(true));
+          });
         });
       };
-      // A build that kept preferences locally had already copied the sync area.
-      if (!storage.sync || Object.hasOwn(local ?? {}, LEGACY_LOCAL_MARKER)) { finish({}); return; }
+      if (!storage.sync) { finish({}); return; }
       storage.sync.get(LEGACY_KEYS, (synced) => {
-        // An unreadable sync area stays unmigrated, so a later start can copy it.
-        if (lastError()) { callback(); return; }
+        if (lastError()) {
+          // A build that kept preferences locally had already copied the sync
+          // area; otherwise leave it unmigrated so a later start can copy it.
+          if (Object.hasOwn(local ?? {}, LEGACY_LOCAL_MARKER)) finish({});
+          else callback(false);
+          return;
+        }
         finish(pickLegacy(synced));
       });
     });
@@ -112,23 +134,44 @@
 
   function load(callback) {
     const local = api()?.local;
-    if (!local) { callback(sanitize({})); return; }
+    const done = (value, isMigrated) => {
+      migrated = isMigrated;
+      baseline = sanitize(value);
+      callback(baseline);
+    };
+    if (!local) { done({}, false); return; }
     local.get([...KEYS, VERSION_KEY], (stored) => {
-      if (lastError()) { callback(sanitize({})); return; }
-      if (stored?.[VERSION_KEY] === VERSION) { callback(sanitize(stored)); return; }
-      migrate(() => local.get(KEYS, (migrated) => callback(sanitize(lastError() ? {} : migrated))));
+      if (lastError()) { done({}, false); return; }
+      if (stored?.[VERSION_KEY] === VERSION) { done(stored, true); return; }
+      migrate((ok) => local.get([...KEYS, ...LEGACY_KEYS], (current) => {
+        if (lastError()) { done({}, false); return; }
+        // Without a completed migration, earlier local values still count.
+        done(ok ? pickSettings(current) : upgradeValues({ ...pickLegacy(current), ...pickSettings(current) }), ok);
+      }));
     });
   }
 
   function save(settings, callback = () => {}) {
     const local = api()?.local;
     if (!local) { callback(null); return; }
-    local.set({ ...pickSettings(sanitize(settings)), [VERSION_KEY]: VERSION }, () => callback(lastError()));
+    const next = sanitize(settings);
+    if (migrated || !baseline) {
+      local.set({ ...pickSettings(next), ...(migrated ? { [VERSION_KEY]: VERSION } : {}) }, () => callback(lastError()));
+      return;
+    }
+    for (const key of KEYS) {
+      if (JSON.stringify(next[key]) !== JSON.stringify(baseline[key])) changedBeforeMigration.add(key);
+    }
+    const changed = Object.fromEntries([...changedBeforeMigration].map((key) => [key, next[key]]));
+    if (Object.keys(changed).length === 0) { callback(null); return; }
+    local.set(changed, () => callback(lastError()));
   }
 
+  // Offered only once the preferences are migrated; before that, the sync copy
+  // may still hold the only copy of some of them.
   function hasSyncCopy(callback) {
     const sync = api()?.sync;
-    if (!sync) { callback(false); return; }
+    if (!sync || !migrated) { callback(false); return; }
     sync.get(LEGACY_KEYS, (synced) => callback(!lastError() && Object.keys(pickLegacy(synced)).length > 0));
   }
 

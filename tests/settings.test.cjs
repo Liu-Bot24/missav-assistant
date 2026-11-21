@@ -7,11 +7,16 @@ const vm = require("node:vm");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 
 // Callback form of chrome.storage with runtime.lastError, as popup and pages use it.
-function createSettings({ local = {}, sync = {}, failures = {} } = {}) {
+function createSettings({ local = {}, sync = {}, failures = {}, hold = [] } = {}) {
   const runtime = { lastError: null };
   const calls = [];
+  const held = [];
   const area = (name, state) => {
     const respond = (operation, callback, value) => {
+      if (hold.includes(`${name}.${operation}`)) {
+        held.push(() => { callback?.(value); });
+        return;
+      }
       calls.push(`${name}.${operation}`);
       runtime.lastError = failures[`${name}.${operation}`] ? { message: "fixture failure" } : null;
       callback?.(runtime.lastError ? undefined : value);
@@ -37,7 +42,8 @@ function createSettings({ local = {}, sync = {}, failures = {} } = {}) {
   const storage = { local: area("local", structuredClone(local)), sync: area("sync", structuredClone(sync)) };
   const context = vm.createContext({ chrome: { runtime, storage }, console });
   for (const file of ["text.js", "label-library.js", "category-library.js", "settings.js"]) vm.runInContext(read(file), context);
-  return { settings: context.SettingsStore, local: storage.local.state, sync: storage.sync.state, calls };
+  return { settings: context.SettingsStore, local: storage.local.state, sync: storage.sync.state, calls,
+    storage, release: () => held.shift()?.() };
 }
 
 const load = (harness) => new Promise((resolve) => harness.settings.load(resolve));
@@ -71,18 +77,68 @@ test("迁移不覆盖本机已保存的设置", async () => {
   assert.equal(loaded.hideUntagged, true);
 });
 
-test("本机旧名称的设置改用新名称，旧键和旧标记删除，不再读同步区", async () => {
+test("本机旧名称的设置改用新名称，旧键和旧标记删除；本机值优先，只在同步区的设置也迁入", async () => {
   const harness = createSettings({
     local: { settingsStorage: "local", blockedPresets: ["other-subtitle"], genreIncludeRules: ["value:VR"], enabled: false },
-    sync: { enabled: true, blockedPresets: ["uncensored"] }
+    sync: { enabled: true, blockedPresets: ["uncensored"], maxActresses: 8 }
   });
   const loaded = await load(harness);
   assert.equal(loaded.enabled, false);
   assert.deepEqual(Array.from(loaded.hiddenLabels), ["other-subtitle"]);
+  assert.equal(loaded.maxActresses, 8, "只在同步区的设置不因标记而丢失");
   assert.deepEqual(Array.from(harness.local.categoryIncludeRules), ["value:VR"]);
   for (const key of ["settingsStorage", "blockedPresets", "genreIncludeRules"]) {
     assert.equal(Object.hasOwn(harness.local, key), false, key);
   }
+});
+
+test("带标记时同步区读不到也完成迁移，因为那一版已复制过同步区", async () => {
+  const harness = createSettings({
+    local: { settingsStorage: "local", blockedPresets: ["other-subtitle"] },
+    failures: { "sync.get": true }
+  });
+  assert.deepEqual(Array.from((await load(harness)).hiddenLabels), ["other-subtitle"]);
+  assert.equal(harness.local.settingsVersion, 2);
+});
+
+test("迁移未完成时改一项设置，只保存这一项，旧设置下次仍能迁入", async () => {
+  const first = createSettings({
+    local: { blockedPresets: ["other-subtitle"] },
+    sync: { maxActresses: 8 },
+    failures: { "sync.get": true }
+  });
+  const loaded = await load(first);
+  assert.deepEqual(Array.from(loaded.hiddenLabels), ["other-subtitle"], "本机旧值在迁移前也生效");
+  assert.equal(await new Promise((resolve) => first.settings.save({ ...loaded, enabled: false }, resolve)), null);
+  assert.deepEqual(Object.keys(first.local).sort(), ["blockedPresets", "enabled"], "不写默认值，也不记录版本");
+  assert.equal(await new Promise((resolve) => first.settings.hasSyncCopy(resolve)), false, "迁移前不提供删除账号副本");
+
+  const later = createSettings({ local: first.local, sync: { maxActresses: 8 } });
+  const migrated = await load(later);
+  assert.equal(migrated.enabled, false, "用户的改动保留");
+  assert.deepEqual(Array.from(migrated.hiddenLabels), ["other-subtitle"]);
+  assert.equal(migrated.maxActresses, 8);
+  assert.equal(later.local.settingsVersion, 2);
+});
+
+test("两处同时迁移时，后完成的一处不覆盖先完成后用户保存的值", async () => {
+  const harness = createSettings({ sync: { maxActresses: 8 }, hold: ["sync.get"] });
+  const done = [];
+  harness.settings.migrate((ok) => done.push(["first", ok]));
+  harness.settings.migrate((ok) => done.push(["second", ok]));
+  harness.release();
+  assert.equal(harness.local.maxActresses, 8);
+  assert.equal(harness.local.settingsVersion, 2);
+  harness.storage.local.set({ maxActresses: 6 });
+  harness.release();
+  assert.equal(harness.local.maxActresses, 6, "用户刚保存的值不被旧快照覆盖");
+  assert.deepEqual(done, [["first", true], ["second", true]]);
+});
+
+test("已是当前版本时迁移直接结束，不再读取同步区", async () => {
+  const harness = createSettings({ local: { settingsVersion: 2, maxActresses: 6 }, sync: { maxActresses: 8 } });
+  assert.equal(await new Promise((resolve) => harness.settings.migrate(resolve)), true);
+  assert.equal(harness.local.maxActresses, 6);
   assert.equal(harness.calls.some((call) => call.startsWith("sync.")), false);
 });
 
@@ -120,6 +176,7 @@ test("保存失败会把错误交给调用方", async () => {
 
 test("账号中的旧副本只在用户删除时移除，且只删设置项", async () => {
   const harness = createSettings({ sync: { enabled: false, blockedPresets: [], unrelated: 1 } });
+  await load(harness);
   assert.equal(await new Promise((resolve) => harness.settings.hasSyncCopy(resolve)), true);
   assert.equal(await new Promise((resolve) => harness.settings.removeSyncCopy(resolve)), null);
   assert.equal(Object.hasOwn(harness.sync, "enabled"), false);
