@@ -1041,7 +1041,8 @@ test("性能回归：样式和 class 变化不会重新启动整页两阶段筛�
 
   assert.equal(runtime.documentQueryCount, baselineQueries);
   assert.equal(runtime.observer.options.attributes, true);
-  assert.equal(Array.from(runtime.observer.options.attributeFilter).join(","), "style");
+  assert.equal(Array.from(runtime.observer.options.attributeFilter).join(","), "style,class,hidden,href");
+  assert.equal(runtime.observer.options.attributeOldValue, true);
   assert.equal(runtime.observer.options.characterData, undefined);
 });
 

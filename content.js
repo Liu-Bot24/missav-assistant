@@ -26,6 +26,10 @@
   const HOME_REFILL_ACK_TIMEOUT_MS = 500;
   const HOME_REFILL_RESPONSE_TIMEOUT_MS = 15000;
   const HOME_GRID_REVEAL_QUIET_MS = 1800;
+  const OBSERVED_ATTRIBUTES = ["style", "class", "hidden", "href"];
+  const OWN_CLASSES = new Set([HIDDEN_CLASS, LABEL_HIDDEN_CLASS, GENRE_HIDDEN_CLASS,
+    ACTRESS_NAMES_CLASS, ACTRESS_HOST_CLASS, PENDING_CLASS, UNVERIFIED_CLASS,
+    SETTLING_GRID_CLASS, BUSY_CONTROL_CLASS]);
   const pageHtmlCache = new Map();
   const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
   metadataClient.subscribe(() => scheduleScan());
@@ -1262,11 +1266,18 @@
     }
 
     if (mutation?.type === "attributes") {
-      if (mutation.attributeName !== "style") return false;
+      if (!OBSERVED_ATTRIBUTES.includes(mutation.attributeName)) return false;
       const target = mutation.target?.nodeType === 1
         ? mutation.target
         : mutation.target?.parentElement;
       if (!target) return false;
+      // A reused card keeps its node and only swaps the link.
+      if (mutation.attributeName === "href") return Boolean(target.closest?.("div.thumbnail"));
+      if (mutation.attributeName === "class") {
+        const siteClasses = (value) => String(value ?? "").split(/\s+/)
+          .filter((name) => name && !OWN_CLASSES.has(name)).sort().join(" ");
+        if (siteClasses(mutation.oldValue) === siteClasses(target.getAttribute("class"))) return false;
+      }
       const possibleBadges = [
         ...(target.matches?.("span") ? [target] : []),
         ...(target.querySelectorAll?.("span") ?? [])
@@ -1316,6 +1327,7 @@
         if (card) cards.add(card);
       }
 
+      if (mutation.type === "attributes" && !closestCard) addCardsFromNode(target);
       for (const node of mutation.addedNodes ?? []) addCardsFromNode(node);
     }
 
@@ -1350,6 +1362,7 @@
 
       const changedCards = collectMutationCards(affectedMutations);
       if (changedCards.length > 0) {
+        for (const card of changedCards) cardSettledRevisions.delete(card);
         noteHomeGridActivity(changedCards);
         prepareEntriesForFiltering(
           changedCards.map((card) => ({ item: findLayoutItem(card), card })),
@@ -1363,7 +1376,8 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["style"]
+      attributeOldValue: true,
+      attributeFilter: OBSERVED_ATTRIBUTES
     });
 
     const scanAfterLoad = () => {
