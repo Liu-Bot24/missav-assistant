@@ -549,6 +549,9 @@
     if (!itemId) return "unverified";
     const record = metadataClient.get(itemId);
     if (["idle", "pending"].includes(record.status)) return "pending";
+    // The service has no record of this video, so retrying cannot help. It can
+    // only fail a "show only" rule; hide and exclude rules have nothing to match.
+    if (record.status === "missing") return settings.genreIncludeRules.length > 0 && genreFilteringEnabled() ? "blocked" : "passed";
     if (record.status !== "ready") return "unverified";
     const metadata = record.data;
     if (genreFilteringEnabled() && (!Array.isArray(metadata.genres) || !Array.isArray(metadata.tags) ||
@@ -602,7 +605,7 @@
           const id = getCardItemId(card, location.href);
           const record = metadataClient.get(id);
           if (metadataDecision(id) === "unverified" ||
-              (!metadataFilteringEnabled() && (["error", "missing"].includes(record.status) ||
+              (!metadataFilteringEnabled() && (record.status === "error" ||
                 (record.status === "ready" && !Array.isArray(record.data.actresses))))) unresolved.add(id);
         }
         if (grid === paginatedGrid) {

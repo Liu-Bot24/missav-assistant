@@ -1293,6 +1293,21 @@ test("包含规则要求至少命中一项，排除规则具有更高优先级",
   assert.equal(excluded.layoutItem.classList.contains(HIDDEN_CLASS), true);
 });
 
+test("分类服务查无此片：只有“只显示”规则时才隐藏，其余规则下照常显示且不提示重试", async () => {
+  const unverified = "missav-content-filter-unverified";
+  for (const [rules, hidden] of [
+    [{ genreIncludeRules: [], genreExcludeRules: ["group:gender-diverse"] }, false],
+    [{ genreIncludeRules: [], genreExcludeRules: [], actressLimitEnabled: true, maxActresses: 1 }, false],
+    [{ genreIncludeRules: [`value:${encodeURIComponent("素人")}`], genreExcludeRules: [] }, true]
+  ]) {
+    const card = makeCard([], { href: "https://missav.ai/none-001" });
+    execute(makePage([card]), rules, { metadata: {} });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(card.layoutItem.classList.contains(HIDDEN_CLASS), hidden, JSON.stringify(rules));
+    assert.equal(card.layoutItem.classList.contains(unverified), false, "不是“未能确认”，重试不会改变结果");
+  }
+});
+
 test("回归：必须包含四小时以上时只保留时长达到 14400 秒的卡片", async () => {
   const fourHoursPlus = makeCard([], { href: "https://missav.ai/mizd-396" });
   const twoHours = makeCard([], { href: "https://missav.ai/mida-737" });
