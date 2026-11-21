@@ -16,6 +16,8 @@ const METADATA_KEY_PREFIX = "md:";
 const LEGACY_METADATA_CACHE_KEY = "videoMetadataById";
 const DISCOVERED_CATEGORIES_KEY = "discoveredCategories";
 const LEGACY_DISCOVERED_KEY = "discoveredTypes";
+// Earlier versions also stored the cache size; it is now kept in memory only.
+const LEGACY_CACHE_COUNT_KEY = "metadataCacheCount";
 const MAX_DISCOVERED_CATEGORIES = 500;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
@@ -186,7 +188,7 @@ function prepareMetadataCache() {
       await migrateLegacyMetadataCache();
       await migrateDiscoveredCategories();
       metadataCacheCount = (await listMetadataKeys()).length;
-      await chrome.storage.local.set({ metadataCacheCount });
+      await chrome.storage.local.remove(LEGACY_CACHE_COUNT_KEY);
     })().catch((error) => {
       metadataCachePrepared = null;
       throw error;
@@ -205,7 +207,6 @@ async function pruneMetadataCache() {
     await chrome.storage.local.remove(expired);
   }
   metadataCacheCount = Math.min(keys.length, MAX_METADATA_CACHE_ITEMS);
-  await chrome.storage.local.set({ metadataCacheCount });
 }
 
 function saveMetadataCache(metadataById, absentIds) {
@@ -218,10 +219,8 @@ function saveMetadataCache(metadataById, absentIds) {
     await prepareMetadataCache();
     const cachedAt = Date.now();
     metadataCacheCount += additions.filter(([id]) => absentIds.has(id)).length;
-    await chrome.storage.local.set({
-      ...Object.fromEntries(additions.map(([id, metadata]) => [metadataKey(id), storedRecord(metadata, cachedAt)])),
-      metadataCacheCount: Math.min(metadataCacheCount, MAX_METADATA_CACHE_ITEMS)
-    });
+    await chrome.storage.local.set(
+      Object.fromEntries(additions.map(([id, metadata]) => [metadataKey(id), storedRecord(metadata, cachedAt)])));
     if (metadataCacheCount > MAX_METADATA_CACHE_ITEMS + METADATA_CACHE_PRUNE_SLACK) await pruneMetadataCache();
   });
 

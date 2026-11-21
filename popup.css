@@ -47,15 +47,6 @@ input {
   height: 32px;
 }
 
-.eyebrow {
-  margin: 0 0 4px;
-  color: #aeb4c2;
-  font-family: Bahnschrift, "Segoe UI", sans-serif;
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.13em;
-}
-
 h1,
 h2,
 p {

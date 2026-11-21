@@ -118,7 +118,6 @@ test("旧版整份缓存一次性迁移为逐片存储，之后每次只读取�
   assert.equal(harness.metrics.fetches, 0, "迁移后的缓存继续命中");
   assert.equal(Object.hasOwn(harness.state, "videoMetadataById"), false, "旧的整份缓存已移除");
   assert.equal(metadataKeys(harness.state).length, 5000);
-  assert.equal(harness.state.metadataCacheCount, 5000);
   assert.equal(Object.hasOwn(harness.state["md:sample-0"], "cast"), false, "可推算的女优统计不再存储");
   const cacheReads = harness.local.metrics.reads.filter((keys) => keys.every((key) => key.startsWith("md:")));
   assert.equal(cacheReads.filter((keys) => keys.length > 1).length, 1, "只有重建分类列表时一次性读取全部缓存");
@@ -135,7 +134,7 @@ test("写入只涉及新增影片，不重写已有的五千条缓存", async ()
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0].filter((key) => key.startsWith("md:")).sort(), ["md:new-001", "md:new-002"]);
   assert.equal(harness.local.metrics.fullReads, 0);
-  assert.equal(harness.state.metadataCacheCount, 5000, "显示数量不超过上限");
+  assert.equal(Object.hasOwn(harness.state, "metadataCacheCount"), false, "旧版存储的缓存数量已移除");
 });
 
 test("新增超过余量后按缓存时间淘汰最旧记录，保留新查到的影片", async () => {
@@ -146,7 +145,6 @@ test("新增超过余量后按缓存时间淘汰最旧记录，保留新查到�
   }
   const keys = metadataKeys(harness.state);
   assert.equal(keys.length, 5000);
-  assert.equal(harness.state.metadataCacheCount, 5000);
   assert.ok(fresh.every((id) => Object.hasOwn(harness.state, `md:${id}`)), "新记录全部保留");
   assert.equal(Object.hasOwn(harness.state, "md:sample-0"), false, "最旧记录被淘汰");
   assert.equal(Object.hasOwn(harness.state, "md:sample-509"), false);
@@ -166,7 +164,7 @@ test("缓存超过一周或时间异常时重新查询并更新", async () => {
   assert.equal(response.items["future-001"].duration, 15000);
   assert.equal(response.items["fresh-001"].duration, 1, "一周内的记录直接使用");
   assert.ok(Date.now() - harness.state["md:old-001"].cachedAt < 60_000, "刷新后重新计时");
-  assert.equal(harness.state.metadataCacheCount, 3, "刷新不重复计数");
+  assert.equal(metadataKeys(harness.state).length, 3, "刷新不新增记录");
 });
 
 test("刷新失败时仍用过期记录，没有缓存的影片留给页面重试", async () => {
@@ -229,7 +227,7 @@ test("部分重叠的并发查询分别返回完整结果，持久缓存合并�
   assert.deepEqual(Object.keys(first.items).sort(), ["sample-001", "sample-002"]);
   assert.deepEqual(Object.keys(second.items).sort(), ["sample-002", "sample-003"]);
   assert.equal(harness.metrics.fetches, 2);
-  assert.equal(harness.state.metadataCacheCount, 3);
+  assert.equal(metadataKeys(harness.state).length, 3);
   const restarted = createCacheHarness(harness.state);
   assert.equal((await restarted.query(["sample-003"])).items["sample-003"].duration, 15000);
   assert.equal(restarted.metrics.fetches, 0, "后台重启后仍复用持久缓存");
@@ -335,7 +333,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   assert.equal(local.state["md:pets-071"].duration, 14438);
   assert.equal(response.items["mida-737"].duration, null);
   assert.equal(local.state["md:mida-737"], undefined);
-  assert.equal(local.state.metadataCacheCount, 1);
+  assert.equal(Object.hasOwn(local.state, "metadataCacheCount"), false, "缓存数量不写入存储");
 });
 
 

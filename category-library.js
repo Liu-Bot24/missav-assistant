@@ -12,7 +12,7 @@
     Object.freeze({
       id: "gender-diverse",
       label: "伪娘 / 变性 / 异装相关",
-      description: "组合匹配站内多语言类型",
+      description: "匹配伪娘、变性和异装相关的全部分类",
       aliases: Object.freeze([
         "人妖", "偽娘", "伪娘", "變性者", "变性者", "異裝男", "异装男",
         "女装・男の娘", "男の娘", "ニューハーフ", "shemale", "transsexual", "transgender"
@@ -349,7 +349,8 @@
         rule: valueRule(value),
         label: typesByAlias.get(normalize(value))?.label ?? value,
         aliases: typesByAlias.get(normalize(value))?.aliases ?? [value],
-        description: "站内类型",
+        // The site's own name, when the Chinese name differs from it.
+        description: (typesByAlias.get(normalize(value))?.label ?? value) === value ? "" : value,
         kind: "value"
       }))
     ];

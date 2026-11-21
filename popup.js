@@ -6,7 +6,6 @@
   let settings = sanitizeSettings(DEFAULT_SETTINGS);
   let discoveredCategories = [];
   let siteStatus = null;
-  let metadataCacheCount = 0;
   let saveTimer;
   // The settings before the last reset, while it can still be undone.
   let undoSettings = null;
@@ -145,9 +144,12 @@
         const copy = document.createElement("span");
         const label = document.createElement("strong");
         label.textContent = option.label;
-        const description = document.createElement("small");
-        description.textContent = option.description;
-        copy.append(label, description);
+        copy.append(label);
+        if (option.description) {
+          const description = document.createElement("small");
+          description.textContent = option.description;
+          copy.append(description);
+        }
 
         const addMark = document.createElement("span");
         addMark.className = "category-add-mark";
@@ -171,7 +173,7 @@
 
   function renderCategoryPickers() {
     const options = CategoryLibrary.options(discoveredCategories);
-    elements.categoryCount.textContent = `${options.length} 类 · 已缓存 ${metadataCacheCount}`;
+    elements.categoryCount.textContent = `${options.length} 类可选`;
     for (const mode of ["include", "exclude"]) {
       renderSelectedCategoryRules(mode, options);
       renderCategorySuggestions(mode, options);
@@ -211,21 +213,21 @@
   function renderSiteStatus() {
     let message = "当前页面未连接，请刷新网页或检查扩展的站点访问权限。";
     if (siteStatus) {
-      if (!siteStatus.compatible) message = "当前页面未识别为兼容的视频列表。";
-      else if (!settings.enabled) message = "当前页面兼容，筛选已暂停。";
-      else if (siteStatus.pageKind === "detail") message = "当前为播放详情页，不执行筛选。";
+      if (!siteStatus.compatible) message = "当前页面不是可筛选的视频列表。";
+      else if (!settings.enabled) message = "筛选已暂停。";
+      else if (siteStatus.pageKind === "detail") message = "播放页不做筛选。";
       else if (siteStatus.pageKind === "home" && !settings.homepageEnabled) message = "当前首页已关闭筛选，其他列表页仍按规则生效。";
       else message = siteStatus.metadata === "missav"
         ? "当前页面支持标签、分类与女优筛选。"
-        : "已识别兼容模板，基础功能可用；分类与女优筛选尚未适配。";
+        : "这个网站可以按标签筛选；分类和女优功能只在 MissAV 上可用。";
     }
     elements.siteStatus.textContent = message;
     const basicOnly = siteStatus?.compatible && !siteStatus.metadata;
     elements.categoryExplainer.textContent = basicOnly
-      ? "此站尚未适配分类数据，以下条件仅在支持分类的网站生效。"
-      : "按视频的内页分类筛选，隐藏条件优先。";
+      ? "这个网站没有分类数据，以下条件只在 MissAV 上生效。"
+      : "按视频详情页上的分类筛选，隐藏条件优先。";
     elements.actressExplainer.textContent = basicOnly
-      ? "此站尚未适配女优数据，以下设置在支持的网站生效。"
+      ? "这个网站没有女优数据，以下设置只在 MissAV 上生效。"
       : "同一演员的不同名字合并计数。";
     if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.hiddenLabels.length +
       settings.categoryIncludeRules.length + settings.categoryExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
@@ -400,26 +402,16 @@
   readSiteStatus();
 
   if (localStorageApi) {
-    localStorageApi.get({ discoveredCategories: {}, metadataCacheCount: 0 }, (stored) => {
+    localStorageApi.get({ discoveredCategories: {} }, (stored) => {
       discoveredCategories = categoryList(stored.discoveredCategories);
-      metadataCacheCount = Number.isFinite(Number(stored.metadataCacheCount))
-        ? Number(stored.metadataCacheCount)
-        : 0;
       renderCategoryPickers();
     });
   }
 
   globalThis.chrome?.storage?.onChanged?.addListener((changes, areaName) => {
     if (areaName !== "local") return;
-    if (changes.discoveredCategories) {
-      discoveredCategories = categoryList(changes.discoveredCategories.newValue);
-    }
-    if (changes.metadataCacheCount) {
-      metadataCacheCount = Number.isFinite(Number(changes.metadataCacheCount.newValue))
-        ? Number(changes.metadataCacheCount.newValue)
-        : 0;
-    }
-    if (!changes.discoveredCategories && !changes.metadataCacheCount) return;
+    if (!changes.discoveredCategories) return;
+    discoveredCategories = categoryList(changes.discoveredCategories.newValue);
     renderCategoryPickers();
   });
 })();
