@@ -154,12 +154,12 @@ const root = path.join(__dirname, '..');
     assert.equal(await pending.locator('#hideUntagged').isChecked(), true);
     assert.equal(await pending.locator('#resetButton').isDisabled(), true, 'no reset while earlier preferences wait to be migrated');
     await pending.close();
-    // Search looks past the 500 most used categories.
+    // Search looks past the 500 most used categories and ignores separators.
     const many = await browser.newPage({ viewport: { width: 380, height: 600 } });
     many.on('pageerror', error => errors.push(error.message));
     await many.addInitScript(() => {
       const counts = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`common-${String(i).padStart(3, '0')}`, 5]));
-      const state = { settingsVersion: 2, discoveredCategories: { ...counts, 'rare-zero-cat': 0 } };
+      const state = { settingsVersion: 2, discoveredCategories: { ...counts, 'rare-zero-cat': 0, 'エステマッサージ': 3 } };
       const area = {
         get(keys, cb) {
           const list = Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(keys);
@@ -179,6 +179,8 @@ const root = path.join(__dirname, '..');
     const suggestions = many.locator('#categoryIncludeSuggestions [role="option"]');
     await many.locator('#categoryIncludeSearch').fill('rare-zero-cat');
     assert.equal(await suggestions.count(), 1, 'a category outside the 500 most used is found by search');
+    await many.locator('#categoryIncludeSearch').fill('エステマッサージ');
+    assert.match(await suggestions.first().textContent(), /美容按摩/, "the site's spelling without the separator finds the category");
     await many.close();
     const partial = await browser.newPage({ viewport: { width: 380, height: 600 } });
     await partial.addInitScript(() => {

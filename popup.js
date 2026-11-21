@@ -63,7 +63,8 @@
     return { all, offered };
   }
 
-  const searchKey = TextKey.normalize;
+  // Separators are ignored, so the site's spelling finds a name written with them.
+  const searchKey = CategoryLibrary.normalize;
 
   function addCategoryRule(rule, mode) {
     settings.categoryIncludeRules = settings.categoryIncludeRules.filter((item) => item !== rule);
