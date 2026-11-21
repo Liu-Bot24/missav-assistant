@@ -309,7 +309,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   assert.equal(body.requests.every((item) => item.method === "POST"), true);
   assert.equal(body.requests.every((item) => item.path === "/search/users/anonymous/items/"), true);
   assert.equal(body.requests.some((item) => "cascadeCreate" in item.params), false);
-  assert.equal(body.requests.every((item) => item.params.count === 10), true);
+  assert.equal(body.requests.every((item) => item.params.count === 1), true, "每个番号只要排第一的结果");
   assert.equal(body.requests.every((item) => item.params.returnProperties === true), true);
   assert.equal(
     body.requests.every((item) => item.params.includedProperties.includes("duration") &&

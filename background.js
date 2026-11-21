@@ -99,7 +99,8 @@ async function fetchMetadata(itemIds) {
           path: "/search/users/anonymous/items/",
           params: {
             searchQuery: id,
-            count: 10,
+            // The exact ID always ranks first; further results were downloaded and discarded.
+            count: 1,
             returnProperties: true,
             includedProperties: ["genres", "tags", "type", "duration", "actresses"]
           }
