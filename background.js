@@ -279,10 +279,12 @@ async function queryMetadata(itemIds) {
         // The service no longer has these videos; their old records go.
         const withdrawn = newIds.filter((id) => fetched[id] === null && !absentIds.has(id));
         if (withdrawn.length > 0) await forgetMetadata(withdrawn).catch(() => {});
-        // A video counts toward the category list once, when it is first cached.
-        const added = Object.fromEntries(Object.entries(fetched)
-          .filter(([id, metadata]) => absentIds.has(id) && isCompleteMetadata(metadata)));
-        await recordCategories(added).catch(() => {});
+        // A video counts toward the category list once, when it is first cached;
+        // categories of videos with incomplete data are offered without a count.
+        const counted = Object.entries(fetched)
+          .filter(([id, metadata]) => absentIds.has(id) && isCompleteMetadata(metadata)).map(([, metadata]) => metadata);
+        const seenOnly = Object.values(fetched).filter((metadata) => metadata && !isCompleteMetadata(metadata));
+        await recordCategories(counted, seenOnly).catch(() => {});
         return fetched;
       }).finally(() => {
         for (const id of newIds) metadataInFlight.delete(id);
@@ -313,7 +315,8 @@ function categoryValues(metadata) {
 }
 
 // Counts how many videos carry each category, one per video and spelling-independent.
-function countCategories(counts, metadataList) {
+// Categories seen only on videos that are not counted are still offered, with no count.
+function countCategories(counts, metadataList, seenOnly = []) {
   // Spellings that earlier versions counted apart are added together.
   const byKey = new Map();
   for (const [value, count] of Object.entries(counts)) {
@@ -330,6 +333,12 @@ function countCategories(counts, metadataList) {
       seen.add(key);
       const [stored, count] = byKey.get(key) ?? [CategoryLibrary.canonicalValue(value), 0];
       byKey.set(key, [stored, count + 1]);
+    }
+  }
+  for (const metadata of seenOnly) {
+    for (const value of categoryValues(metadata)) {
+      const key = CategoryLibrary.conceptKey(value);
+      if (key && !byKey.has(key)) byKey.set(key, [CategoryLibrary.canonicalValue(value), 0]);
     }
   }
   // When full, the rarest categories make room; ties keep the alphabetical first.
@@ -355,12 +364,11 @@ async function migrateDiscoveredCategories() {
   if (Object.hasOwn(stored, LEGACY_DISCOVERED_KEY)) await chrome.storage.local.remove(LEGACY_DISCOVERED_KEY);
 }
 
-function recordCategories(metadataById) {
-  const fetched = Object.values(metadataById).filter(Boolean);
-  if (!fetched.some((metadata) => categoryValues(metadata).length > 0)) return Promise.resolve();
+function recordCategories(counted, seenOnly = []) {
+  if (![...counted, ...seenOnly].some((metadata) => categoryValues(metadata).length > 0)) return Promise.resolve();
   discoveryWrite = discoveryWrite.catch(() => {}).then(async () => {
     await prepareMetadataCache();
-    const counts = countCategories(await readCategoryCounts(), fetched);
+    const counts = countCategories(await readCategoryCounts(), counted, seenOnly);
     await chrome.storage.local.set({ [DISCOVERED_CATEGORIES_KEY]: counts });
   });
   return discoveryWrite;

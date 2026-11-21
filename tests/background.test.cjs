@@ -320,8 +320,8 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
       !item.params.includedProperties.includes("actresses_count")),
     true
   );
-  assert.deepEqual({ ...local.state.discoveredCategories }, { "女装・男の娘": 1 },
-    "分类列表只收 genres 和 tags，不收 type；资料不完整、未入缓存的影片不计数");
+  assert.deepEqual({ ...local.state.discoveredCategories }, { "女装・男の娘": 1, "単体作品": 0 },
+    "分类列表只收 genres 和 tags，不收 type；资料不完整的影片只提供分类名，不计数");
   assert.equal(Object.hasOwn(local.state, "discoveredTypes"), false, "旧的分类列表已移除");
 
   const cachedResponse = await new Promise((resolve) => {
@@ -387,6 +387,14 @@ test("同一部资料不完整的影片重复查询不重复计数；旧版分�
   await harness.query(["partial-001"]);
   await harness.query(["new-001"]);
   assert.deepEqual({ ...harness.state.discoveredCategories }, { "風俗": 20 });
+});
+
+test("只在资料不完整的影片上见过的分类仍进入候选，但不计次数", async () => {
+  const harness = createCacheHarness({ discoveredCategories: { "中出し": 3 } },
+    { values: { genres: ["只在这里出现"], tags: [] }, responses: { "partial-001": "incomplete" } });
+  await harness.query(["partial-001"]);
+  await harness.query(["partial-001"]);
+  assert.deepEqual({ ...harness.state.discoveredCategories }, { "中出し": 3, "只在这里出现": 0 });
 });
 
 test("分类服务命中影片但没有字段时按资料不完整处理，不删除完整旧记录", async () => {
