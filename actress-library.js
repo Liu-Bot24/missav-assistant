@@ -18,6 +18,26 @@
       }
     }
 
+    const uniqueMatch = (candidates) => candidates?.size === 1 ? candidates.entries().next().value : null;
+
+    // The site writes one person as "主名（别名、别名）". The bracketed names count
+    // only when every recognized part points to the same person.
+    function matchName(normalized) {
+      const whole = byAlias.get(normalized);
+      if (whole) return uniqueMatch(whole);
+      const parts = /^(.+?)\((.+)\)$/.exec(normalized);
+      if (!parts) return null;
+      const keys = new Map();
+      for (const part of [parts[1], ...parts[2].split(/[、,，/]/)]) {
+        const candidates = byAlias.get(part);
+        if (!candidates) continue;
+        const match = uniqueMatch(candidates);
+        if (!match) return null;
+        keys.set(match[0], match);
+      }
+      return keys.size === 1 ? keys.values().next().value : null;
+    }
+
     return (names) => {
       const people = new Map();
       const unresolved = new Map();
@@ -25,8 +45,7 @@
       for (const name of Array.isArray(names) ? names : []) {
         if (typeof name !== "string" || !name.trim()) continue;
         const normalized = normalize(name);
-        const candidates = byAlias.get(normalized);
-        const match = candidates?.size === 1 ? candidates.entries().next().value : null;
+        const match = matchName(normalized);
         const person = match?.[1];
         if (person?.id) {
           if (!people.has(person.id)) people.set(person.id, { id: person.id, name: person.name });

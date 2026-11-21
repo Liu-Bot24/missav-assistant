@@ -57,3 +57,20 @@ test('姓名只做精确规范化匹配，不用子串匹配猜身份', () => {
   assert.equal(library.resolve(['ＭＩＲＵ', 'miru', '坂道みる']).confirmedCount, 1);
   assert.equal(library.resolve(['松本いちか別人']).confirmedCount, 0);
 });
+
+test('“主名（别名、别名）”写法按括号里的名字认出同一人', () => {
+  const result = library.resolve(['水咲ローラ（滝澤ローラ）', 'ミュウ（夏目ミュウ、春川リサ、夏目衣織）']);
+  assert.equal(result.confirmedCount, 2);
+  assert.equal(result.complete, true);
+});
+
+test('括号里的名字指向不同的人或同名异人时不合并、不计数', () => {
+  const resolve = library.createResolver({ records: [
+    { id: 'person-a', name: '甲', aliases: ['演员甲', '同名'] },
+    { id: 'person-b', name: '乙', aliases: ['演员乙', '同名'] }
+  ] });
+  assert.equal(resolve(['未知（演员甲、演员乙）']).confirmedCount, 0);
+  assert.equal(resolve(['未知（同名）']).confirmedCount, 0);
+  assert.equal(resolve(['未知（演员甲、未收录）']).confirmedCount, 1);
+  assert.equal(resolve(['完全未知（也未收录）']).complete, false);
+});
