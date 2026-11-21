@@ -4,7 +4,7 @@
   const DEFAULT_SETTINGS = MissavSettings.DEFAULTS;
   const sanitizeSettings = MissavSettings.sanitize;
   let settings = sanitizeSettings(DEFAULT_SETTINGS);
-  let discoveredTypes = [];
+  let discoveredCategories = [];
   let siteStatus = null;
   let metadataCacheCount = 0;
   let saveTimer;
@@ -37,6 +37,11 @@
     syncNotice: document.querySelector("#syncNotice"),
     removeSyncCopy: document.querySelector("#removeSyncCopy")
   };
+
+  // Stored as category -> number of videos seen with it.
+  function categoryList(counts) {
+    return counts && typeof counts === "object" && !Array.isArray(counts) ? Object.keys(counts) : [];
+  }
 
   function normalizeForComparison(value) {
     return String(value).normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
@@ -164,7 +169,7 @@
   }
 
   function renderGenrePickers() {
-    const options = MissavGenreLibrary.options(discoveredTypes);
+    const options = MissavGenreLibrary.options(discoveredCategories);
     elements.genreCount.textContent = `${options.length} 类 · 已缓存 ${metadataCacheCount}`;
     for (const mode of ["include", "exclude"]) {
       renderSelectedGenreRules(mode, options);
@@ -340,7 +345,7 @@
         return;
       }
       if (event.key !== "Enter") return;
-      const first = matchingGenreOptions(mode, MissavGenreLibrary.options(discoveredTypes))[0];
+      const first = matchingGenreOptions(mode, MissavGenreLibrary.options(discoveredCategories))[0];
       if (!first) return;
       event.preventDefault();
       picker.input.value = "";
@@ -375,8 +380,8 @@
   readSiteStatus();
 
   if (localStorageApi) {
-    localStorageApi.get({ discoveredTypes: [], metadataCacheCount: 0 }, (stored) => {
-      discoveredTypes = Array.isArray(stored.discoveredTypes) ? stored.discoveredTypes : [];
+    localStorageApi.get({ discoveredCategories: {}, metadataCacheCount: 0 }, (stored) => {
+      discoveredCategories = categoryList(stored.discoveredCategories);
       metadataCacheCount = Number.isFinite(Number(stored.metadataCacheCount))
         ? Number(stored.metadataCacheCount)
         : 0;
@@ -386,17 +391,15 @@
 
   globalThis.chrome?.storage?.onChanged?.addListener((changes, areaName) => {
     if (areaName !== "local") return;
-    if (changes.discoveredTypes) {
-      discoveredTypes = Array.isArray(changes.discoveredTypes.newValue)
-        ? changes.discoveredTypes.newValue
-        : [];
+    if (changes.discoveredCategories) {
+      discoveredCategories = categoryList(changes.discoveredCategories.newValue);
     }
     if (changes.metadataCacheCount) {
       metadataCacheCount = Number.isFinite(Number(changes.metadataCacheCount.newValue))
         ? Number(changes.metadataCacheCount.newValue)
         : 0;
     }
-    if (!changes.discoveredTypes && !changes.metadataCacheCount) return;
+    if (!changes.discoveredCategories && !changes.metadataCacheCount) return;
     renderGenrePickers();
   });
 })();

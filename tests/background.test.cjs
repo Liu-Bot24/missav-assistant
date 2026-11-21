@@ -120,9 +120,9 @@ test("旧版整份缓存一次性迁移为逐片存储，之后每次只读取�
   assert.equal(metadataKeys(harness.state).length, 5000);
   assert.equal(harness.state.metadataCacheCount, 5000);
   assert.equal(Object.hasOwn(harness.state["md:sample-0"], "cast"), false, "可推算的女优统计不再存储");
-  const queryReads = harness.local.metrics.reads.filter((keys) => keys.every((key) => key.startsWith("md:")));
-  assert.equal(queryReads.length, 12);
-  assert.ok(queryReads.every((keys) => keys.length === 1), "每次只读取所查的影片");
+  const cacheReads = harness.local.metrics.reads.filter((keys) => keys.every((key) => key.startsWith("md:")));
+  assert.equal(cacheReads.filter((keys) => keys.length > 1).length, 1, "只有重建分类列表时一次性读取全部缓存");
+  assert.equal(cacheReads.filter((keys) => keys.length === 1).length, 12, "每次查询只读取所查的影片");
   await harness.clear();
   await harness.query(["sample-0"]);
   assert.equal(harness.metrics.fetches, 1, "缓存被清空后重新查询");
@@ -317,10 +317,9 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
       !item.params.includedProperties.includes("actresses_count")),
     true
   );
-  assert.deepEqual(
-    Array.from(local.state.discoveredTypes).sort(),
-    ["単体作品", "女装・男の娘", "jav"].sort()
-  );
+  assert.deepEqual({ ...local.state.discoveredCategories }, { "単体作品": 1, "女装・男の娘": 1 },
+    "分类列表只收 genres 和 tags，不收 type");
+  assert.equal(Object.hasOwn(local.state, "discoveredTypes"), false, "旧的分类列表已移除");
 
   const cachedResponse = await new Promise((resolve) => {
     messageListener(
@@ -339,6 +338,33 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   assert.equal(local.state.metadataCacheCount, 1);
 });
 
+
+test("旧分类列表按已缓存影片重建：按出现次数计数、合并不同写法、不含 type", async () => {
+  const record = (genres) => ({ ...sampleRecord(recent(0)), genres, type: "fc2" });
+  const harness = createCacheHarness({
+    discoveredTypes: ["jav", "uncensored-leak", "旧分类"],
+    "md:a-001": record(["3P・4P", "中出し"]),
+    "md:a-002": record(["3P、4P", "3P/4P"]),
+    "md:a-003": record(["中出し"])
+  });
+  await harness.query(["a-001"]);
+  assert.deepEqual({ ...harness.state.discoveredCategories }, { "3P・4P": 2, "中出し": 2 });
+  assert.equal(Object.hasOwn(harness.state, "discoveredTypes"), false);
+});
+
+test("分类列表满 500 项时淘汰最少出现的，常见分类保留", async () => {
+  const common = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`常见-${i}`, 5]));
+  const harness = createCacheHarness({ discoveredCategories: common }, { values: { genres: ["新出现"], tags: [] } });
+  await harness.query(["n-001", "n-002"]);
+  const counts = harness.state.discoveredCategories;
+  assert.equal(Object.keys(counts).length, 500);
+  assert.equal(counts["新出现"], undefined, "只出现两次的新分类不挤掉出现五次的");
+  const rising = createCacheHarness({ discoveredCategories: { ...common, "常见-0": 1 } },
+    { values: { genres: ["新出现"], tags: [] } });
+  await rising.query(["n-001", "n-002"]);
+  assert.equal(rising.state.discoveredCategories["新出现"], 2);
+  assert.equal(rising.state.discoveredCategories["常见-0"], undefined);
+});
 
 test("未适配域名不能调用原站分类库，包括名称相似的域名", () => {
   const harness = createCacheHarness();

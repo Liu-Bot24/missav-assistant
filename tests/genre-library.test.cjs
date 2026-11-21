@@ -79,3 +79,23 @@ test("四小时以上按接口时长秒数判断，并迁移旧文字规则", ()
     false
   );
 });
+
+test("同一分类的不同写法共用一条规则", () => {
+  const library = loadLibrary();
+  const multi = library.valueRule("3P・4P");
+  for (const value of ["3P・4P", "3P、4P", "3P/4P", "多人運動"]) assert.equal(library.matches(multi, [value]), true, value);
+  for (const [rule, value] of [["ベスト・総集編", "ベスト、総集編"], ["寝取り・寝取られ・NTR", "寝取り・寝取られ"],
+    ["若妻・幼妻", "若妻"], ["エステ", "エステ・マッサージ"]]) {
+    assert.equal(library.matches(library.valueRule(rule), [value]), true, value);
+    assert.equal(library.normalizeRule(library.valueRule(value)), library.valueRule(rule), "旧规则归到同一分类");
+  }
+  const labels = library.options(["3P、4P", "3P/4P", "ベスト、総集編"]).map((option) => option.label);
+  assert.equal(labels.filter((label) => label === "多人运动").length, 1);
+  assert.equal(labels.includes("最佳，综合"), false);
+});
+
+test("不同分类不会因为去掉标点而合并", () => {
+  const library = loadLibrary();
+  assert.equal(library.matches(library.valueRule("姉・妹"), ["姉"]), false);
+  assert.equal(library.matches(library.valueRule("野外・露出"), ["露出"]), false);
+});

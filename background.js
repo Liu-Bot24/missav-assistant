@@ -14,6 +14,9 @@ const METADATA_CACHE_PRUNE_SLACK = 500;
 // Each video is its own storage key, so a write touches only the videos it adds.
 const METADATA_KEY_PREFIX = "md:";
 const LEGACY_METADATA_CACHE_KEY = "videoMetadataById";
+const DISCOVERED_CATEGORIES_KEY = "discoveredCategories";
+const LEGACY_DISCOVERED_KEY = "discoveredTypes";
+const MAX_DISCOVERED_CATEGORIES = 500;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
 chrome.runtime.onInstalled?.addListener(() => {
@@ -181,6 +184,7 @@ function prepareMetadataCache() {
   if (!metadataCachePrepared) {
     metadataCachePrepared = (async () => {
       await migrateLegacyMetadataCache();
+      await migrateDiscoveredCategories();
       metadataCacheCount = (await listMetadataKeys()).length;
       await chrome.storage.local.set({ metadataCacheCount });
     })().catch((error) => {
@@ -256,6 +260,7 @@ async function queryMetadata(itemIds) {
       // A failed refresh leaves the IDs out; stale records then still answer.
       const pending = fetchMetadata(newIds).catch(() => ({})).then(async (fetched) => {
         await saveMetadataCache(fetched, absentIds).catch(() => {});
+        await recordCategories(fetched).catch(() => {});
         return fetched;
       }).finally(() => {
         for (const id of newIds) metadataInFlight.delete(id);
@@ -275,36 +280,60 @@ async function queryMetadata(itemIds) {
 
 let discoveryWrite = Promise.resolve();
 
-function saveDiscoveredTypes(metadataById) {
-  const additions = Object.values(metadataById)
-    .filter(Boolean)
-    .flatMap((metadata) => [
-      ...(metadata.genres ?? []),
-      ...(metadata.tags ?? []),
-      ...(metadata.type ? [metadata.type] : [])
-    ])
+// Categories for the picker: genres and tags only. The type field holds the
+// site's catalogue names and uploader codes, which are not categories.
+function categoryValues(metadata) {
+  return [...(metadata?.genres ?? []), ...(metadata?.tags ?? [])]
     .map((value) => String(value).trim())
     .filter(Boolean);
-  if (additions.length === 0) return;
+}
 
-  discoveryWrite = discoveryWrite.then(async () => {
-    const stored = await chrome.storage.local.get({ discoveredTypes: [] });
-    const byKey = new Map(
-      [...stored.discoveredTypes, ...additions]
-        .map((value) => [MissavGenreLibrary.normalize(value), String(value).trim()])
-        .filter(([key]) => Boolean(key))
-    );
-    const nextTypes = [...byKey.values()]
-      .sort((left, right) => left.localeCompare(right, "zh-CN"))
-      .slice(0, 500);
-    if (
-      nextTypes.length === stored.discoveredTypes.length &&
-      nextTypes.every((value, index) => value === stored.discoveredTypes[index])
-    ) {
-      return;
+// Counts how many videos carry each category, one per video and spelling-independent.
+function countCategories(counts, metadataList) {
+  const byKey = new Map(Object.entries(counts).map(([value, count]) =>
+    [MissavGenreLibrary.conceptKey(value), [value, count]]));
+  for (const metadata of metadataList) {
+    const seen = new Set();
+    for (const value of categoryValues(metadata)) {
+      const key = MissavGenreLibrary.conceptKey(value);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const [stored, count] = byKey.get(key) ?? [MissavGenreLibrary.canonicalValue(value), 0];
+      byKey.set(key, [stored, count + 1]);
     }
-    await chrome.storage.local.set({ discoveredTypes: nextTypes });
-  }).catch(() => {});
+  }
+  // When full, the rarest categories make room; ties keep the alphabetical first.
+  return Object.fromEntries([...byKey.values()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"))
+    .slice(0, MAX_DISCOVERED_CATEGORIES));
+}
+
+async function readCategoryCounts() {
+  const stored = await chrome.storage.local.get(DISCOVERED_CATEGORIES_KEY);
+  const counts = stored[DISCOVERED_CATEGORIES_KEY];
+  return counts && typeof counts === "object" && !Array.isArray(counts) ? counts : {};
+}
+
+// Earlier versions kept an alphabetical list that mixed in type values.
+// The cached videos rebuild it with counts, once.
+async function migrateDiscoveredCategories() {
+  const stored = await chrome.storage.local.get([DISCOVERED_CATEGORIES_KEY, LEGACY_DISCOVERED_KEY]);
+  if (Object.hasOwn(stored, DISCOVERED_CATEGORIES_KEY)) return;
+  const keys = await listMetadataKeys();
+  const records = keys.length > 0 ? Object.values(await chrome.storage.local.get(keys)) : [];
+  await chrome.storage.local.set({ [DISCOVERED_CATEGORIES_KEY]: countCategories({}, records) });
+  if (Object.hasOwn(stored, LEGACY_DISCOVERED_KEY)) await chrome.storage.local.remove(LEGACY_DISCOVERED_KEY);
+}
+
+function recordCategories(metadataById) {
+  const fetched = Object.values(metadataById).filter(Boolean);
+  if (!fetched.some((metadata) => categoryValues(metadata).length > 0)) return Promise.resolve();
+  discoveryWrite = discoveryWrite.catch(() => {}).then(async () => {
+    await prepareMetadataCache();
+    const counts = countCategories(await readCategoryCounts(), fetched);
+    await chrome.storage.local.set({ [DISCOVERED_CATEGORIES_KEY]: counts });
+  });
+  return discoveryWrite;
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -319,10 +348,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   void queryMetadata(message.itemIds)
-    .then((items) => {
-      saveDiscoveredTypes(items);
-      sendResponse({ ok: true, items });
-    })
+    .then((items) => sendResponse({ ok: true, items }))
     .catch(() => sendResponse({ ok: false, items: {} }));
   return true;
 });
