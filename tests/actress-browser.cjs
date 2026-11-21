@@ -95,9 +95,9 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
       await chrome.storage.local.set({ enabled: true, homepageEnabled: true,
         blockedPresets: [], genreIncludeRules: [], genreExcludeRules: [],
         actressLimitEnabled: true, maxActresses: 3, showActressNames: true, infiniteScroll: false });
-      await chrome.storage.local.set({ videoMetadataById: {
-        'single-001': { genres: [], tags: [], duration: 7200, type: 'jav' }
-      } });
+      await chrome.storage.local.set({
+        'md:single-001': { genres: [], tags: [], duration: 7200, type: 'jav' }
+      });
     }, fixtureNames);
     const settings = value => worker.evaluate(value => chrome.storage.local.set(value), value);
     const page = await context.newPage();
@@ -192,9 +192,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
       const start = await worker.evaluate(async mode => {
         recoveryMode = mode;
         recoveryAttempts = 0;
-        const { videoMetadataById } = await chrome.storage.local.get('videoMetadataById');
-        for (const id of ['recover-single-001', 'recover-multi-001']) delete videoMetadataById[id];
-        await chrome.storage.local.set({ videoMetadataById });
+        await chrome.storage.local.remove(['md:recover-single-001', 'md:recover-multi-001']);
         return fixtureCalls.length;
       }, mode);
       const retryPage = await context.newPage();

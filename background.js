@@ -7,11 +7,16 @@ const API_HOST = "https://client-rapi-missav.recombee.com";
 const PUBLIC_TOKEN = "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV";
 const MAX_BATCH_SIZE = 30;
 const MAX_METADATA_CACHE_ITEMS = 5000;
-const METADATA_CACHE_KEY = "videoMetadataById";
+// Pruning reads every record, so it runs once per this many additions, not per write.
+const METADATA_CACHE_PRUNE_SLACK = 500;
+// Each video is its own storage key, so a write touches only the videos it adds.
+const METADATA_KEY_PREFIX = "md:";
+const LEGACY_METADATA_CACHE_KEY = "videoMetadataById";
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
 chrome.runtime.onInstalled?.addListener(() => {
   MissavSettings.migrate();
+  void prepareMetadataCache().catch(() => {});
 });
 
 async function signPath(path) {
@@ -127,62 +132,85 @@ async function fetchMetadata(itemIds) {
 }
 
 let metadataCacheWrite = Promise.resolve();
-let metadataCache = null;
-let metadataCacheLoad = null;
+let metadataCachePrepared = null;
+let metadataCacheCount = null;
 const metadataInFlight = new Map();
 
-function cacheObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+const metadataKey = (id) => `${METADATA_KEY_PREFIX}${id}`;
+
+// Only the site's own fields are stored; the cast summary is derived on every read.
+function storedRecord(metadata, cachedAt) {
+  const { genres, tags, type, duration, actresses } = metadata;
+  return { genres, tags, type, duration, actresses, cachedAt };
 }
 
-function loadMetadataCache() {
-  if (metadataCache !== null) return Promise.resolve(metadataCache);
-  if (!metadataCacheLoad) {
-    const load = chrome.storage.local.get({ [METADATA_CACHE_KEY]: {} }).then((stored) => {
-      if (metadataCacheLoad === load) metadataCache = cacheObject(stored[METADATA_CACHE_KEY]);
-      return metadataCache ?? cacheObject(stored[METADATA_CACHE_KEY]);
-    }).catch((error) => {
-      if (metadataCacheLoad === load) metadataCacheLoad = null;
+async function listMetadataKeys() {
+  const keys = typeof chrome.storage.local.getKeys === "function"
+    ? await chrome.storage.local.getKeys()
+    : Object.keys(await chrome.storage.local.get(null));
+  return keys.filter((key) => key.startsWith(METADATA_KEY_PREFIX));
+}
+
+// Moves the single-object cache of earlier versions to per-video keys, once.
+async function migrateLegacyMetadataCache() {
+  const stored = await chrome.storage.local.get(LEGACY_METADATA_CACHE_KEY);
+  if (!Object.hasOwn(stored, LEGACY_METADATA_CACHE_KEY)) return;
+  const legacy = stored[LEGACY_METADATA_CACHE_KEY];
+  const records = Object.entries(legacy && typeof legacy === "object" ? legacy : {})
+    .filter(([id]) => ITEM_ID_PATTERN.test(id))
+    .map(([id, record]) => [id, sanitizeMetadata(record), Number(record?.cachedAt) || 0])
+    .filter(([, metadata]) => isCompleteMetadata(metadata))
+    .sort((left, right) => right[2] - left[2])
+    .slice(0, MAX_METADATA_CACHE_ITEMS);
+  if (records.length > 0) {
+    await chrome.storage.local.set(Object.fromEntries(records.map(([id, metadata, cachedAt]) =>
+      [metadataKey(id), storedRecord(metadata, cachedAt)])));
+  }
+  await chrome.storage.local.remove(LEGACY_METADATA_CACHE_KEY);
+}
+
+function prepareMetadataCache() {
+  if (!metadataCachePrepared) {
+    metadataCachePrepared = (async () => {
+      await migrateLegacyMetadataCache();
+      metadataCacheCount = (await listMetadataKeys()).length;
+      await chrome.storage.local.set({ metadataCacheCount });
+    })().catch((error) => {
+      metadataCachePrepared = null;
       throw error;
     });
-    metadataCacheLoad = load;
   }
-  return metadataCacheLoad;
+  return metadataCachePrepared;
 }
 
-chrome.storage.onChanged?.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes[METADATA_CACHE_KEY]) return;
-  metadataCache = cacheObject(changes[METADATA_CACHE_KEY].newValue);
-  metadataCacheLoad = null;
-});
+async function pruneMetadataCache() {
+  const keys = await listMetadataKeys();
+  if (keys.length > MAX_METADATA_CACHE_ITEMS) {
+    const records = await chrome.storage.local.get(keys);
+    const expired = keys
+      .sort((left, right) => Number(records[right]?.cachedAt ?? 0) - Number(records[left]?.cachedAt ?? 0))
+      .slice(MAX_METADATA_CACHE_ITEMS);
+    await chrome.storage.local.remove(expired);
+  }
+  metadataCacheCount = Math.min(keys.length, MAX_METADATA_CACHE_ITEMS);
+  await chrome.storage.local.set({ metadataCacheCount });
+}
 
-function saveMetadataCache(metadataById) {
+function saveMetadataCache(metadataById, absentIds) {
   const additions = Object.entries(metadataById)
     .map(([id, metadata]) => [id, sanitizeMetadata(metadata)])
     .filter(([, metadata]) => isCompleteMetadata(metadata));
   if (additions.length === 0) return Promise.resolve();
 
   metadataCacheWrite = metadataCacheWrite.catch(() => {}).then(async () => {
-    const current = await loadMetadataCache();
-    const cache = { ...current };
+    await prepareMetadataCache();
     const cachedAt = Date.now();
-
-    for (const [id, metadata] of additions) {
-      cache[id] = { ...metadata, cachedAt };
-    }
-
-    const retained = Object.entries(cache)
-      .filter(([, record]) => isCompleteMetadata(sanitizeMetadata(record)))
-      .sort((left, right) => Number(right[1].cachedAt ?? 0) - Number(left[1].cachedAt ?? 0))
-      .slice(0, MAX_METADATA_CACHE_ITEMS);
-    const prunedCache = Object.fromEntries(retained);
+    metadataCacheCount += additions.filter(([id]) => absentIds.has(id)).length;
     await chrome.storage.local.set({
-      [METADATA_CACHE_KEY]: prunedCache,
-      metadataCacheCount: retained.length
+      ...Object.fromEntries(additions.map(([id, metadata]) => [metadataKey(id), storedRecord(metadata, cachedAt)])),
+      metadataCacheCount: Math.min(metadataCacheCount, MAX_METADATA_CACHE_ITEMS)
     });
-    // onChanged normally supplies the new snapshot. Retain it here as well
-    // when that notification has not arrived yet; never overwrite a newer one.
-    if (metadataCache === current) metadataCache = prunedCache;
+    if (metadataCacheCount > MAX_METADATA_CACHE_ITEMS + METADATA_CACHE_PRUNE_SLACK) await pruneMetadataCache();
   });
 
   return metadataCacheWrite;
@@ -192,12 +220,16 @@ async function queryMetadata(itemIds) {
   const ids = normalizeItemIds(itemIds);
   if (ids.length === 0) return {};
 
-  const cache = await loadMetadataCache();
+  await prepareMetadataCache();
+  const stored = await chrome.storage.local.get(ids.map(metadataKey));
   const metadataById = {};
   const missingIds = [];
+  const absentIds = new Set();
 
   for (const id of ids) {
-    const cached = sanitizeMetadata(cache?.[id]);
+    const record = stored[metadataKey(id)];
+    if (record === undefined) absentIds.add(id);
+    const cached = sanitizeMetadata(record);
     if (isCompleteMetadata(cached)) metadataById[id] = cached;
     else missingIds.push(id);
   }
@@ -206,7 +238,7 @@ async function queryMetadata(itemIds) {
     const newIds = missingIds.filter((id) => !metadataInFlight.has(id));
     if (newIds.length > 0) {
       const pending = fetchMetadata(newIds).then(async (fetched) => {
-        await saveMetadataCache(fetched).catch(() => {});
+        await saveMetadataCache(fetched, absentIds).catch(() => {});
         return fetched;
       }).finally(() => {
         for (const id of newIds) metadataInFlight.delete(id);

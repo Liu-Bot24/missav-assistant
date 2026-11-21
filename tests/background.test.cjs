@@ -11,12 +11,48 @@ function loadScripts(context, files) {
   for (const file of files) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context);
 }
 
-function createCacheHarness(initialCache = {}, options = {}) {
+// Mirrors the Promise form of chrome.storage.local, including key lists and null reads.
+function createLocalArea(initial = {}) {
+  const state = structuredClone(initial);
+  const metrics = { reads: [], writes: [], fullReads: 0 };
+  const copy = (key) => structuredClone(state[key]);
+  const api = {
+    async get(keys) {
+      if (keys === null || keys === undefined) {
+        metrics.fullReads += 1;
+        return structuredClone(state);
+      }
+      if (typeof keys === "string") keys = [keys];
+      if (Array.isArray(keys)) {
+        metrics.reads.push([...keys]);
+        return Object.fromEntries(keys.filter((key) => Object.hasOwn(state, key)).map((key) => [key, copy(key)]));
+      }
+      metrics.reads.push(Object.keys(keys));
+      return Object.fromEntries(Object.entries(keys).map(([key, fallback]) =>
+        [key, Object.hasOwn(state, key) ? copy(key) : fallback]));
+    },
+    async set(value) {
+      metrics.writes.push(Object.keys(value));
+      Object.assign(state, structuredClone(value));
+    },
+    async remove(keys) {
+      for (const key of [].concat(keys)) delete state[key];
+    },
+    async getKeys() {
+      return Object.keys(state);
+    }
+  };
+  return { state, metrics, api };
+}
+
+const metadataKeys = (state) => Object.keys(state).filter((key) => key.startsWith("md:"));
+const metadataWrites = (metrics) => metrics.writes.filter((keys) => keys.some((key) => key.startsWith("md:")));
+
+function createCacheHarness(initialState = {}, options = {}) {
   const failures = options.fetchFailures ?? 0;
   let listener;
-  let storageListener;
-  const state = { videoMetadataById: initialCache, discoveredTypes: [] };
-  const metrics = { fetches: 0, cacheReads: 0, cacheWrites: 0 };
+  const local = createLocalArea(initialState);
+  const metrics = { fetches: 0 };
   const context = vm.createContext({
     crypto: crypto.webcrypto, TextEncoder, Uint8Array, URL, console, AbortSignal,
     fetch: async (_url, requestOptions) => {
@@ -31,39 +67,29 @@ function createCacheHarness(initialCache = {}, options = {}) {
     },
     chrome: {
       runtime: { onMessage: { addListener(fn) { listener = fn; } } },
-      storage: {
-        onChanged: { addListener(fn) { storageListener = fn; } },
-        local: {
-          async get(defaults) {
-            if ("videoMetadataById" in defaults) metrics.cacheReads += 1;
-            return structuredClone({ ...defaults, ...state });
-          },
-          async set(value) {
-            if (value.videoMetadataById) metrics.cacheWrites += 1;
-            Object.assign(state, structuredClone(value));
-            storageListener?.(Object.fromEntries(Object.entries(value).map(([key, newValue]) =>
-              [key, { newValue: structuredClone(newValue) }]
-            )), "local");
-          }
-        }
-      }
+      storage: { local: local.api }
     }
   });
   context.importScripts = (...files) => loadScripts(context, files);
   vm.runInContext(backgroundSource, context);
   return {
-    metrics, state,
+    metrics, local, state: local.state,
     message(value, sender, respond) { return listener(value, sender, respond); },
     query(ids) { return new Promise((resolve) => listener(
       { type: "missav-query-metadata", itemIds: ids },
       { tab: { url: "https://missav.ai/new" } }, resolve
     )); },
-    clear() {
-      state.videoMetadataById = {};
-      storageListener?.({ videoMetadataById: { newValue: {} } }, "local");
+    async clear() {
+      await local.api.remove(metadataKeys(local.state));
     }
   };
 }
+
+const sampleRecord = (cachedAt) => ({
+  genres: ["sample"], tags: [], type: "sample", duration: 15000, actresses: ["松本いちか"], cachedAt
+});
+const perVideoCache = (count) => Object.fromEntries(Array.from({ length: count }, (_, i) =>
+  [`md:sample-${i}`, sampleRecord(i + 1)]));
 
 test("性能：多个页面同时查询重叠番号只发出一次在途查询", async () => {
   const harness = createCacheHarness();
@@ -74,26 +100,55 @@ test("性能：多个页面同时查询重叠番号只发出一次在途查询",
     assert.equal(response.ok, true);
     assert.equal(response.items["sample-002"].duration, 15000);
   }
-  console.log(JSON.stringify({ scenario: "overlapping-tabs", ...harness.metrics }));
   assert.equal(harness.metrics.fetches, 1);
-  assert.equal(harness.metrics.cacheWrites, 1);
+  assert.equal(metadataWrites(harness.local.metrics).length, 1);
   await harness.query(["sample-003"]);
   assert.equal(harness.metrics.fetches, 2, "不同番号仍必须查询");
 });
 
-test("性能：热缓存不重复读取整份五千条映射，清空后会重新查询", async () => {
-  const metadata = { genres: ["sample"], tags: [], type: "sample", duration: 15000, actresses: ["松本いちか"] };
-  const cache = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`sample-${i}`, metadata]));
-  const harness = createCacheHarness(cache);
+test("旧版整份缓存一次性迁移为逐片存储，之后每次只读取所查影片", async () => {
+  const legacy = Object.fromEntries(Array.from({ length: 5000 }, (_, i) =>
+    [`sample-${i}`, { ...sampleRecord(i + 1), cast: { confirmedCount: 1 } }]));
+  const harness = createCacheHarness({ videoMetadataById: legacy });
   for (let i = 0; i < 12; i += 1) {
     assert.equal((await harness.query([`sample-${i}`])).items[`sample-${i}`].duration, 15000);
   }
-  console.log(JSON.stringify({ scenario: "warm-cache", ...harness.metrics }));
-  assert.equal(harness.metrics.fetches, 0);
-  assert.equal(harness.metrics.cacheReads, 1);
-  harness.clear();
+  assert.equal(harness.metrics.fetches, 0, "迁移后的缓存继续命中");
+  assert.equal(Object.hasOwn(harness.state, "videoMetadataById"), false, "旧的整份缓存已移除");
+  assert.equal(metadataKeys(harness.state).length, 5000);
+  assert.equal(harness.state.metadataCacheCount, 5000);
+  assert.equal(Object.hasOwn(harness.state["md:sample-0"], "cast"), false, "可推算的女优统计不再存储");
+  const queryReads = harness.local.metrics.reads.filter((keys) => keys.every((key) => key.startsWith("md:")));
+  assert.equal(queryReads.length, 12);
+  assert.ok(queryReads.every((keys) => keys.length === 1), "每次只读取所查的影片");
+  await harness.clear();
   await harness.query(["sample-0"]);
-  assert.equal(harness.metrics.fetches, 1, "外部缓存变化不能留下过期内存映射");
+  assert.equal(harness.metrics.fetches, 1, "缓存被清空后重新查询");
+});
+
+test("写入只涉及新增影片，不重写已有的五千条缓存", async () => {
+  const harness = createCacheHarness({ ...perVideoCache(5000), metadataCacheCount: 5000 });
+  await harness.query(["new-001", "new-002"]);
+  const writes = metadataWrites(harness.local.metrics);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].filter((key) => key.startsWith("md:")).sort(), ["md:new-001", "md:new-002"]);
+  assert.equal(harness.local.metrics.fullReads, 0);
+  assert.equal(harness.state.metadataCacheCount, 5000, "显示数量不超过上限");
+});
+
+test("新增超过余量后按缓存时间淘汰最旧记录，保留新查到的影片", async () => {
+  const harness = createCacheHarness({ ...perVideoCache(5000), metadataCacheCount: 5000 });
+  const fresh = Array.from({ length: 510 }, (_, i) => `fresh-${i}`);
+  for (let offset = 0; offset < fresh.length; offset += 30) {
+    await harness.query(fresh.slice(offset, offset + 30));
+  }
+  const keys = metadataKeys(harness.state);
+  assert.equal(keys.length, 5000);
+  assert.equal(harness.state.metadataCacheCount, 5000);
+  assert.ok(fresh.every((id) => Object.hasOwn(harness.state, `md:${id}`)), "新记录全部保留");
+  assert.equal(Object.hasOwn(harness.state, "md:sample-0"), false, "最旧记录被淘汰");
+  assert.equal(Object.hasOwn(harness.state, "md:sample-509"), false);
+  assert.equal(Object.hasOwn(harness.state, "md:sample-510"), true);
 });
 
 test("合并查询失败后释放在途项，下一次请求可以恢复", async () => {
@@ -108,7 +163,7 @@ test("合并查询失败后释放在途项，下一次请求可以恢复", async
 
 test("旧缓存补齐女优数据后按人物去重，新缓存不重复请求", async () => {
   const old = { genres: ['sample'], tags: [], type: 'sample', duration: 15000 };
-  const harness = createCacheHarness({ 'sample-001': old }, {
+  const harness = createCacheHarness({ videoMetadataById: { 'sample-001': old } }, {
     actresses: ['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬']
   });
   const first = await harness.query(['sample-001']);
@@ -116,7 +171,7 @@ test("旧缓存补齐女优数据后按人物去重，新缓存不重复请求",
   assert.equal(first.items['sample-001'].actresses.length, 5);
   assert.equal(first.items['sample-001'].cast.confirmedCount, 1);
   assert.equal(first.items['sample-001'].cast.names[0], '田中柠檬');
-  assert.equal(harness.state.videoMetadataById['sample-001'].actresses.length, 5);
+  assert.equal(harness.state['md:sample-001'].actresses.length, 5);
   const cached = await harness.query(['sample-001']);
   assert.equal(cached.items['sample-001'].cast.confirmedCount, 1);
   assert.equal(harness.metrics.fetches, 1);
@@ -129,7 +184,7 @@ test("资料缺失不伪装成空分类或零时长，也不作为完整缓存�
   assert.equal(first.genres, null);
   assert.equal(first.duration, null);
   assert.equal(first.actresses, null);
-  assert.equal(harness.state.videoMetadataById['partial-001'], undefined);
+  assert.equal(harness.state['md:partial-001'], undefined);
   Object.assign(values, { genres: [], duration: 7000, actresses: [] });
   const recovered = (await harness.query(['partial-001'])).items['partial-001'];
   assert.equal(recovered.genres.length, 0, '明确的空数组仍然是有效资料');
@@ -148,7 +203,7 @@ test("部分重叠的并发查询分别返回完整结果，持久缓存合并�
   assert.deepEqual(Object.keys(second.items).sort(), ["sample-002", "sample-003"]);
   assert.equal(harness.metrics.fetches, 2);
   assert.equal(harness.state.metadataCacheCount, 3);
-  const restarted = createCacheHarness(harness.state.videoMetadataById);
+  const restarted = createCacheHarness(harness.state);
   assert.equal((await restarted.query(["sample-003"])).items["sample-003"].duration, 15000);
   assert.equal(restarted.metrics.fetches, 0, "后台重启后仍复用持久缓存");
 });
@@ -157,8 +212,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   let messageListener;
   let request;
   let fetchCount = 0;
-  let savedTypes;
-  const localState = { discoveredTypes: [] };
+  const local = createLocalArea({ discoveredTypes: [] });
   const context = vm.createContext({
     crypto: crypto.webcrypto,
     AbortSignal,
@@ -200,17 +254,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
           }
         }
       },
-      storage: {
-        local: {
-          async get(defaults) {
-            return { ...defaults, ...localState };
-          },
-          async set(value) {
-            Object.assign(localState, value);
-            if (value.discoveredTypes) savedTypes = value.discoveredTypes;
-          }
-        }
-      }
+      storage: { local: local.api }
     }
   });
   context.importScripts = (...files) => loadScripts(context, files);
@@ -247,7 +291,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
     true
   );
   assert.deepEqual(
-    Array.from(savedTypes).sort(),
+    Array.from(local.state.discoveredTypes).sort(),
     ["単体作品", "女装・男の娘", "jav"].sort()
   );
 
@@ -262,10 +306,10 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   assert.equal(cachedResponse.ok, true);
   assert.equal(cachedResponse.items["pets-071"].duration, 14438);
   assert.equal(fetchCount, 1);
-  assert.equal(localState.videoMetadataById["pets-071"].duration, 14438);
+  assert.equal(local.state["md:pets-071"].duration, 14438);
   assert.equal(response.items["mida-737"].duration, null);
-  assert.equal(localState.videoMetadataById["mida-737"], undefined);
-  assert.equal(localState.metadataCacheCount, 1);
+  assert.equal(local.state["md:mida-737"], undefined);
+  assert.equal(local.state.metadataCacheCount, 1);
 });
 
 
