@@ -169,9 +169,25 @@ test("同步区读不到时不记录版本，下次启动还会再试", async ()
 });
 
 test("保存失败会把错误交给调用方", async () => {
-  const harness = createSettings({ failures: { "local.set": true } });
+  const harness = createSettings({ local: { settingsVersion: 2 }, failures: { "local.set": true } });
+  await load(harness);
   const error = await new Promise((resolve) => harness.settings.save(harness.settings.DEFAULTS, resolve));
   assert.ok(error);
+});
+
+test("读取设置之前不保存，避免用默认值覆盖未迁移的设置", async () => {
+  const harness = createSettings({ local: { blockedPresets: ["other-subtitle"] } });
+  const error = await new Promise((resolve) => harness.settings.save({ ...harness.settings.DEFAULTS, enabled: false }, resolve));
+  assert.ok(error);
+  assert.deepEqual(Object.keys(harness.local), ["blockedPresets"]);
+});
+
+test("弹窗直接修改读到的设置对象再保存，迁移未完成时也能存下改动", async () => {
+  const harness = createSettings({ local: { blockedPresets: ["other-subtitle"] }, failures: { "sync.get": true } });
+  const loaded = await load(harness);
+  loaded.enabled = false;
+  assert.equal(await new Promise((resolve) => harness.settings.save(loaded, resolve)), null);
+  assert.equal(harness.local.enabled, false);
 });
 
 test("账号中的旧副本只在用户删除时移除，且只删设置项", async () => {

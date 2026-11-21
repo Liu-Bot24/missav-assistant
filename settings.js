@@ -137,7 +137,8 @@
     const done = (value, isMigrated) => {
       migrated = isMigrated;
       baseline = sanitize(value);
-      callback(baseline);
+      // The caller gets its own copy; edits to it must not move the baseline.
+      callback(sanitize(value));
     };
     if (!local) { done({}, false); return; }
     local.get([...KEYS, VERSION_KEY], (stored) => {
@@ -154,9 +155,11 @@
   function save(settings, callback = () => {}) {
     const local = api()?.local;
     if (!local) { callback(null); return; }
+    // Nothing is known about the stored preferences before a load.
+    if (!baseline) { callback(new Error("Settings are not loaded yet")); return; }
     const next = sanitize(settings);
-    if (migrated || !baseline) {
-      local.set({ ...pickSettings(next), ...(migrated ? { [VERSION_KEY]: VERSION } : {}) }, () => callback(lastError()));
+    if (migrated) {
+      local.set({ ...pickSettings(next), [VERSION_KEY]: VERSION }, () => callback(lastError()));
       return;
     }
     for (const key of KEYS) {
