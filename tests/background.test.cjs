@@ -63,6 +63,7 @@ function createCacheHarness(initialState = {}, options = {}) {
         const id = request.params.searchQuery;
         const answer = options.responses?.[id];
         if (answer === "missing") return { code: 200, json: { recomms: [] } };
+        if (answer === "bare") return { code: 200, json: { recomms: [{ id }] } };
         const values = { genres: ["sample"], tags: [], type: "sample", duration: 15000,
           actresses: options.actresses ?? ["松本いちか", "松本一香"], ...options.values };
         if (answer === "incomplete") delete values.actresses;
@@ -319,8 +320,8 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
       !item.params.includedProperties.includes("actresses_count")),
     true
   );
-  assert.deepEqual({ ...local.state.discoveredCategories }, { "単体作品": 1, "女装・男の娘": 1 },
-    "分类列表只收 genres 和 tags，不收 type");
+  assert.deepEqual({ ...local.state.discoveredCategories }, { "女装・男の娘": 1 },
+    "分类列表只收 genres 和 tags，不收 type；资料不完整、未入缓存的影片不计数");
   assert.equal(Object.hasOwn(local.state, "discoveredTypes"), false, "旧的分类列表已移除");
 
   const cachedResponse = await new Promise((resolve) => {
@@ -377,6 +378,24 @@ test("过期影片刷新时不重复计入分类次数", async () => {
   assert.equal(harness.state.discoveredCategories.sample, 1);
   await harness.query(["new-001"]);
   assert.equal(harness.state.discoveredCategories.sample, 2, "第一次缓存的影片照常计数");
+});
+
+test("同一部资料不完整的影片重复查询不重复计数；旧版分开计的写法合并相加", async () => {
+  const harness = createCacheHarness({ discoveredCategories: { "风俗": 15, "風俗": 4 } },
+    { values: { genres: ["風俗"], tags: [] }, responses: { "partial-001": "incomplete" } });
+  await harness.query(["partial-001"]);
+  await harness.query(["partial-001"]);
+  await harness.query(["new-001"]);
+  assert.deepEqual({ ...harness.state.discoveredCategories }, { "風俗": 20 });
+});
+
+test("分类服务命中影片但没有字段时按资料不完整处理，不删除完整旧记录", async () => {
+  const harness = createCacheHarness({
+    "md:bare-001": { ...sampleRecord(Date.now() - 8 * 24 * 60 * 60 * 1000), duration: 1 }
+  }, { responses: { "bare-001": "bare" } });
+  const response = await harness.query(["bare-001"]);
+  assert.equal(response.items["bare-001"].duration, 1);
+  assert.equal(harness.state["md:bare-001"].duration, 1);
 });
 
 test("刷新得到不完整资料时继续用完整的旧记录；分类服务明确查无此片时删除旧记录", async () => {

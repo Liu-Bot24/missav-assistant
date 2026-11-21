@@ -129,8 +129,14 @@ async function fetchMetadata(itemIds) {
     // Missing keys are retried by the content script; explicit nulls are not.
     if (entry?.code !== 200 || !Array.isArray(entry.json?.recomms)) continue;
     const exact = entry.json.recomms.find((item) => item.id === ids[index]);
-    if (!exact?.values) {
+    // No such video: an explicit null. A match without fields is incomplete
+    // data, not a missing video, and falls through as such.
+    if (!exact) {
       result[ids[index]] = null;
+      continue;
+    }
+    if (!exact.values || typeof exact.values !== "object") {
+      result[ids[index]] = sanitizeMetadata({ genres: null, tags: null, type: null, duration: null, actresses: null });
       continue;
     }
 
@@ -274,7 +280,8 @@ async function queryMetadata(itemIds) {
         const withdrawn = newIds.filter((id) => fetched[id] === null && !absentIds.has(id));
         if (withdrawn.length > 0) await forgetMetadata(withdrawn).catch(() => {});
         // A video counts toward the category list once, when it is first cached.
-        const added = Object.fromEntries(Object.entries(fetched).filter(([id]) => absentIds.has(id)));
+        const added = Object.fromEntries(Object.entries(fetched)
+          .filter(([id, metadata]) => absentIds.has(id) && isCompleteMetadata(metadata)));
         await recordCategories(added).catch(() => {});
         return fetched;
       }).finally(() => {
@@ -307,8 +314,14 @@ function categoryValues(metadata) {
 
 // Counts how many videos carry each category, one per video and spelling-independent.
 function countCategories(counts, metadataList) {
-  const byKey = new Map(Object.entries(counts).map(([value, count]) =>
-    [CategoryLibrary.conceptKey(value), [value, count]]));
+  // Spellings that earlier versions counted apart are added together.
+  const byKey = new Map();
+  for (const [value, count] of Object.entries(counts)) {
+    const key = CategoryLibrary.conceptKey(value);
+    if (!key) continue;
+    const [stored, total] = byKey.get(key) ?? [CategoryLibrary.canonicalValue(value), 0];
+    byKey.set(key, [stored, total + (Number(count) || 0)]);
+  }
   for (const metadata of metadataList) {
     const seen = new Set();
     for (const value of categoryValues(metadata)) {
