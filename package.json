@@ -10,6 +10,7 @@
     "test:actresses": "node tests/actress-browser.cjs",
     "test:pipeline": "node tests/pipeline-browser.cjs",
     "test:templates": "node tests/template-browser.cjs",
-    "test:dynamic-pages": "node tests/dynamic-pages-browser.cjs"
+    "test:dynamic-pages": "node tests/dynamic-pages-browser.cjs",
+    "test:default-performance": "node tests/default-settings-performance.cjs"
   }
 }

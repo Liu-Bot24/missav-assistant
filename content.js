@@ -35,7 +35,15 @@
   const pageHtmlCache = new Map();
   const pageRequests = new Set();
   const metadataClient = MissavMetadataClient.create({ query: sendMetadataQuery });
-  metadataClient.subscribe(() => scheduleScan());
+  // Only cards whose data changed are re-checked; settings, page load and
+  // navigation re-check the whole page.
+  const changedMetadataIds = new Set();
+  let fullScanPending = true;
+  let lastScannedUrl = null;
+  metadataClient.subscribe((ids) => {
+    for (const id of ids) changedMetadataIds.add(id);
+    scheduleScan();
+  });
   const metadataNotices = new Map();
   const stalledPageIds = new Set();
   const cardSettledRevisions = new WeakMap();
@@ -494,7 +502,9 @@
     }
     card.classList.add(ACTRESS_HOST_CLASS);
     const text = names.slice(0, 3).join("、") + (names.length > 3 ? "…" : "");
-    if (overlay.textContent !== text) overlay.textContent = text;
+    // Reading the badge's style forces layout, so size the overlay only when its text changes.
+    if (overlay.textContent === text) return;
+    overlay.textContent = text;
     const badge = [...card.querySelectorAll("span")].find(isBadge);
     const badgeSize = badge ? Number.parseFloat(getComputedStyle(badge).fontSize) : 12;
     const fontSize = `${Math.max(24, (Number.isFinite(badgeSize) ? badgeSize : 12) * 2)}px`;
@@ -671,10 +681,25 @@
     return { cancelled: false, unresolved: unresolved.map(({ itemId }) => itemId) };
   }
 
+  function requestFullScan() {
+    fullScanPending = true;
+    scheduleScan();
+  }
+
   function filterCurrentDocument() {
-    const entries = [...document.querySelectorAll("div.thumbnail")]
-      .map((card) => ({ item: findLayoutItem(card), card }));
-    prepareEntriesForFiltering(entries, true, location.href);
+    let cards = [...document.querySelectorAll("div.thumbnail")];
+    if (fullScanPending || lastScannedUrl !== location.href) {
+      fullScanPending = false;
+      lastScannedUrl = location.href;
+      changedMetadataIds.clear();
+    } else {
+      const ids = new Set(changedMetadataIds);
+      changedMetadataIds.clear();
+      cards = ids.size === 0 ? [] : cards.filter((card) => ids.has(getCardItemId(card, location.href)));
+    }
+    if (cards.length > 0) {
+      prepareEntriesForFiltering(cards.map((card) => ({ item: findLayoutItem(card), card })), true, location.href);
+    }
     updateMetadataNotices();
   }
 
@@ -1433,6 +1458,8 @@
       }
 
       if (mutation.type === "attributes" && !closestCard) addCardsFromNode(target);
+      // Adding or removing items can change which element holds each card.
+      if (mutation.type === "childList" && !closestCard) addCardsFromNode(target?.closest?.("div.grid"));
       for (const node of mutation.addedNodes ?? []) addCardsFromNode(node);
     }
 
@@ -1486,8 +1513,8 @@
     });
 
     const scanAfterLoad = () => {
-      scheduleScan();
-      setTimeout(scheduleScan, 750);
+      requestFullScan();
+      setTimeout(requestFullScan, 750);
     };
     window.addEventListener("online", () => {
       retryMetadata();
@@ -1519,7 +1546,7 @@
       for (const key of changedKeys) nextSettings[key] = changes[key].newValue;
       settings = sanitizeSettings(nextSettings);
       if (changedKeys.every((key) => key === "showActressNames")) {
-        scheduleScan();
+        requestFullScan();
         return;
       }
       cancelPageRequests();
@@ -1537,13 +1564,7 @@
       }
       teardownInfiniteScroll();
       removeRefillItems();
-      prepareEntriesForFiltering(
-        [...document.querySelectorAll("div.thumbnail")]
-          .map((card) => ({ item: findLayoutItem(card), card })),
-        true,
-        location.href
-      );
-      scheduleScan();
+      requestFullScan();
     });
     return () => ({
       pageKind: isVideoDetailPage() ? "detail" : isHomePage() ? "home" : "list"
