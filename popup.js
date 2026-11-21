@@ -7,7 +7,12 @@
   let discoveredCategories = [];
   let siteStatus = null;
   let saveTimer;
-  // The settings before the last reset, while it can still be undone.
+  // The settings before the last reset, while it can still be undone. They
+  // are also kept for this browser session, so closing and reopening the
+  // popup within the time still offers the undo.
+  const UNDO_PERIOD_MS = 10000;
+  const UNDO_KEY = "resetUndo";
+  const sessionStorageApi = globalThis.chrome?.storage?.session ?? null;
   let undoSettings = null;
   let undoTimer;
   let openCategoryPicker = null;
@@ -262,9 +267,21 @@
   }
 
   function endUndo() {
+    const wasOffered = undoSettings !== null;
     undoSettings = null;
     clearTimeout(undoTimer);
     elements.resetButton.textContent = "恢复默认";
+    if (wasOffered) sessionStorageApi?.remove(UNDO_KEY);
+  }
+
+  function offerUndo(previous, expiresAt) {
+    undoSettings = previous;
+    elements.resetButton.textContent = "撤销";
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => {
+      endUndo();
+      showSaveState("设置自动保存");
+    }, Math.max(0, expiresAt - Date.now()));
   }
 
   function persist(savedMessage = "已保存，页面将自动更新", keepUndo = false) {
@@ -391,18 +408,21 @@
       categoryExcludeRules: [...DEFAULT_SETTINGS.categoryExcludeRules]
     };
     persist("已恢复默认设置", true);
-    undoSettings = previous;
-    elements.resetButton.textContent = "撤销";
-    undoTimer = setTimeout(() => {
-      endUndo();
-      showSaveState("设置自动保存");
-    }, 10000);
+    const expiresAt = Date.now() + UNDO_PERIOD_MS;
+    offerUndo(previous, expiresAt);
+    sessionStorageApi?.set({ [UNDO_KEY]: { settings: previous, expiresAt } });
   });
 
   SettingsStore.load((storedSettings) => {
     settings = storedSettings;
     render();
     readSyncCopy();
+    sessionStorageApi?.get(UNDO_KEY, (stored) => {
+      const saved = globalThis.chrome?.runtime?.lastError ? null : stored?.[UNDO_KEY];
+      if (!saved?.settings || !(Number(saved.expiresAt) > Date.now())) return;
+      offerUndo(sanitizeSettings(saved.settings), Number(saved.expiresAt));
+      showSaveState("可撤销刚才的恢复默认", true);
+    });
   });
 
   readSiteStatus();
