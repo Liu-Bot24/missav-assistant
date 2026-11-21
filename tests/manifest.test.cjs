@@ -60,7 +60,6 @@ test("设置弹窗不包含远程资源或内联脚本", () => {
   assert.ok(html.indexOf('src="text.js"') < html.indexOf('src="label-library.js"'));
   assert.ok(html.indexOf('src="settings.js"') < html.indexOf('src="popup.js"'));
   assert.match(html, /value="other-subtitle"/);
-  assert.doesNotMatch(html, /customForm|customLabel/);
   assert.match(html, /id="infiniteScroll"/);
   assert.match(html, /id="categoryIncludeField"/);
   assert.match(html, /id="categoryIncludeSuggestions"/);

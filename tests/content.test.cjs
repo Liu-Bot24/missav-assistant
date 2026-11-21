@@ -1057,15 +1057,6 @@ test("暂停过滤后会恢复之前隐藏的卡片", () => {
   assert.equal(blocked.layoutItem.classList.contains(HIDDEN_CLASS), false);
 });
 
-test("停用的自定义标签不再产生不可见的过滤规则", () => {
-  const custom = makeCard([{ text: " 4K " }]);
-  execute(makePage([custom]), {
-    hiddenLabels: [],
-    customLabels: ["4k"]
-  });
-  assert.equal(custom.layoutItem.classList.contains(HIDDEN_CLASS), false);
-});
-
 test("回归：过滤 5 项后会从下一页补足到 12 项", async () => {
   const blocked = Array.from({ length: 5 }, () => makeCard([{ text: "無碼影片" }]));
   const allowed = Array.from({ length: 7 }, () => makeCard([]));

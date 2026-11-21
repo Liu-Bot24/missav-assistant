@@ -1,6 +1,6 @@
 {
   "name": "missav-assistant",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "test": "node --test tests/background.test.cjs tests/content.test.cjs tests/category-library.test.cjs tests/actress-library.test.cjs tests/metadata-client.test.cjs tests/settings.test.cjs tests/manifest.test.cjs",

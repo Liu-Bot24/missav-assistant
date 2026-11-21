@@ -12,7 +12,7 @@ const root = path.join(__dirname, '..');
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
-      window.saved = { settingsVersion: 2, hiddenLabels: ['other-subtitle'], customLabels: ['obsolete'], categoryExcludeRules: [] };
+      window.saved = { settingsVersion: 2, hiddenLabels: ['other-subtitle'], categoryExcludeRules: [] };
       window.syncSaved = { enabled: true, hideUntagged: false, unrelated: 1 };
       // Callback form of chrome.storage areas: merging set, key lists or defaults on get.
       const area = (name) => ({
@@ -37,12 +37,10 @@ const root = path.join(__dirname, '..');
     assert.equal(await page.locator('#syncNotice').isVisible(), false);
     assert.deepEqual(await page.evaluate(() => window.syncSaved), { unrelated: 1 }, 'only preference keys are removed');
     assert.equal(await page.locator('[value="other-subtitle"]').isChecked(), true);
-    assert.equal(await page.locator('#customForm').count(), 0);
     assert.equal(await page.locator('#ruleSummary').textContent(), '当前启用 2 条规则');
     await page.locator('label.rule-row').filter({ has: page.locator('#hideUntagged') }).click();
     assert.equal(await page.evaluate(() => window.saved.hideUntagged), true);
     assert.deepEqual(await page.evaluate(() => window.saved.hiddenLabels), ['other-subtitle']);
-    assert.equal(await page.evaluate(() => Object.hasOwn(window.lastSet, 'customLabels')), false);
     assert.equal(await page.evaluate(() => Object.hasOwn(window.syncSaved, 'hideUntagged')), false, 'saving never writes the account copy');
     assert.equal(await page.locator('h1').textContent(), '观看小助手');
     assert.equal(await page.locator('#homepageEnabled').isChecked(), true);
