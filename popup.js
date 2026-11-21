@@ -55,12 +55,18 @@
       .map(([value]) => value);
   }
 
+  // Built once per category list, not on every keystroke.
+  let builtOptions = null;
+  let builtFor = null;
   function categoryOptions() {
+    if (builtFor === discoveredCategories) return builtOptions;
     const all = CategoryLibrary.options(discoveredCategories);
     const offered = discoveredCategories.length > MAX_OFFERED_CATEGORIES
       ? CategoryLibrary.options(discoveredCategories.slice(0, MAX_OFFERED_CATEGORIES))
       : all;
-    return { all, offered };
+    builtFor = discoveredCategories;
+    builtOptions = { all, offered };
+    return builtOptions;
   }
 
   // Separators are ignored, so the site's spelling finds a name written with them.
