@@ -8,6 +8,9 @@
   let siteStatus = null;
   let metadataCacheCount = 0;
   let saveTimer;
+  // The settings before the last reset, while it can still be undone.
+  let undoSettings = null;
+  let undoTimer;
   let openGenrePicker = null;
   const localStorageApi = globalThis.chrome?.storage?.local;
 
@@ -252,12 +255,19 @@
     }, 1600);
   }
 
-  function persist() {
+  function endUndo() {
+    undoSettings = null;
+    clearTimeout(undoTimer);
+    elements.resetButton.textContent = "恢复默认";
+  }
+
+  function persist(savedMessage = "已保存，页面将自动更新", keepUndo = false) {
+    if (!keepUndo) endUndo();
     settings = sanitizeSettings(settings);
     render();
     MissavSettings.save(settings, (error) => {
       if (error) showSaveState("保存失败，请再改一次", true);
-      else showSaveState("已保存，页面将自动更新");
+      else showSaveState(savedMessage, keepUndo);
     });
   }
 
@@ -362,13 +372,25 @@
   });
 
   elements.resetButton.addEventListener("click", () => {
+    if (undoSettings) {
+      settings = undoSettings;
+      persist("已撤销，设置已还原");
+      return;
+    }
+    const previous = structuredClone(settings);
     settings = {
       ...DEFAULT_SETTINGS,
       blockedPresets: [...DEFAULT_SETTINGS.blockedPresets],
       genreIncludeRules: [],
       genreExcludeRules: [...DEFAULT_SETTINGS.genreExcludeRules]
     };
-    persist();
+    persist("已恢复默认设置", true);
+    undoSettings = previous;
+    elements.resetButton.textContent = "撤销";
+    undoTimer = setTimeout(() => {
+      endUndo();
+      showSaveState("设置自动保存");
+    }, 10000);
   });
 
   MissavSettings.load((storedSettings) => {
