@@ -45,18 +45,25 @@
     removeSyncCopy: document.querySelector("#removeSyncCopy")
   };
 
-  // Stored as category -> number of videos seen with it.
-  // Most used first; the picker offers the most used ones.
+  // Stored as category -> number of videos seen with it, most used first.
+  // The open list shows the most used ones; a search looks through all of them.
   const MAX_OFFERED_CATEGORIES = 500;
   function categoryList(counts) {
     if (!counts || typeof counts !== "object" || Array.isArray(counts)) return [];
     return Object.entries(counts)
       .sort((left, right) => Number(right[1]) - Number(left[1]) || left[0].localeCompare(right[0], "zh-CN"))
-      .slice(0, MAX_OFFERED_CATEGORIES)
       .map(([value]) => value);
   }
 
-  const normalizeForComparison = TextKey.normalize;
+  function categoryOptions() {
+    const all = CategoryLibrary.options(discoveredCategories);
+    const offered = discoveredCategories.length > MAX_OFFERED_CATEGORIES
+      ? CategoryLibrary.options(discoveredCategories.slice(0, MAX_OFFERED_CATEGORIES))
+      : all;
+    return { all, offered };
+  }
+
+  const searchKey = TextKey.normalize;
 
   function addCategoryRule(rule, mode) {
     settings.categoryIncludeRules = settings.categoryIncludeRules.filter((item) => item !== rule);
@@ -95,14 +102,14 @@
       CategoryLibrary.decodeValueRule(rule) ?? rule;
   }
 
-  function matchingCategoryOptions(mode, options) {
+  function matchingCategoryOptions(mode, { all, offered }) {
     const picker = categoryPickerElements(mode);
-    const query = normalizeForComparison(picker.input.value);
-    return options.filter((option) =>
+    const query = searchKey(picker.input.value);
+    if (!query) return offered.filter((option) => !picker.rules.includes(option.rule));
+    return all.filter((option) =>
       !picker.rules.includes(option.rule) &&
-      (!query || [option.label, ...(option.aliases ?? [])]
-        .some((label) => normalizeForComparison(label).includes(query)))
-    );
+      [option.label, ...(option.aliases ?? [])].some((label) => searchKey(label).includes(query))
+    ).slice(0, MAX_OFFERED_CATEGORIES);
   }
 
   function renderSelectedCategoryRules(mode, options) {
@@ -183,10 +190,10 @@
   }
 
   function renderCategoryPickers() {
-    const options = CategoryLibrary.options(discoveredCategories);
-    elements.categoryCount.textContent = `${options.length} 类可选`;
+    const options = categoryOptions();
+    elements.categoryCount.textContent = `${options.all.length} 类可选`;
     for (const mode of ["include", "exclude"]) {
-      renderSelectedCategoryRules(mode, options);
+      renderSelectedCategoryRules(mode, options.all);
       renderCategorySuggestions(mode, options);
     }
   }
@@ -381,7 +388,7 @@
         return;
       }
       if (event.key !== "Enter") return;
-      const first = matchingCategoryOptions(mode, CategoryLibrary.options(discoveredCategories))[0];
+      const first = matchingCategoryOptions(mode, categoryOptions())[0];
       if (!first) return;
       event.preventDefault();
       picker.input.value = "";

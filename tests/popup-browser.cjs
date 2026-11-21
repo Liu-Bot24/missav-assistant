@@ -154,6 +154,32 @@ const root = path.join(__dirname, '..');
     assert.equal(await pending.locator('#hideUntagged').isChecked(), true);
     assert.equal(await pending.locator('#resetButton').isDisabled(), true, 'no reset while earlier preferences wait to be migrated');
     await pending.close();
+    // Search looks past the 500 most used categories.
+    const many = await browser.newPage({ viewport: { width: 380, height: 600 } });
+    many.on('pageerror', error => errors.push(error.message));
+    await many.addInitScript(() => {
+      const counts = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`common-${String(i).padStart(3, '0')}`, 5]));
+      const state = { settingsVersion: 2, discoveredCategories: { ...counts, 'rare-zero-cat': 0 } };
+      const area = {
+        get(keys, cb) {
+          const list = Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(keys);
+          const defaults = keys && !Array.isArray(keys) && typeof keys === 'object' ? keys : {};
+          setTimeout(() => cb(Object.fromEntries(list.filter((key) => Object.hasOwn(state, key) || Object.hasOwn(defaults, key))
+            .map((key) => [key, Object.hasOwn(state, key) ? structuredClone(state[key]) : defaults[key]]))));
+        },
+        set(value, cb) { Object.assign(state, structuredClone(value)); setTimeout(() => cb?.()); },
+        remove(_keys, cb) { setTimeout(() => cb?.()); }
+      };
+      window.chrome = { runtime: { lastError: null },
+        tabs: { query(_options, cb) { cb([{ id: 1 }]); }, sendMessage(_id, _msg, cb) { cb({ compatible: true, metadata: 'missav', pageKind: 'list' }); } },
+        storage: { local: area, onChanged: { addListener() {} } } };
+    });
+    await many.goto(pathToFileURL(path.join(root, 'popup.html')).href);
+    await many.waitForTimeout(100);
+    const suggestions = many.locator('#categoryIncludeSuggestions [role="option"]');
+    await many.locator('#categoryIncludeSearch').fill('rare-zero-cat');
+    assert.equal(await suggestions.count(), 1, 'a category outside the 500 most used is found by search');
+    await many.close();
     const partial = await browser.newPage({ viewport: { width: 380, height: 600 } });
     await partial.addInitScript(() => {
       window.chrome = { runtime: {}, tabs: {
