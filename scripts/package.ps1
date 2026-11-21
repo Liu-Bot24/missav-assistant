@@ -139,7 +139,9 @@ try {
       throw "$path is a link; sync only updates a plain folder. Nothing was changed."
     }
   }
-  $linked = @(Get-ChildItem -LiteralPath $destination -Recurse -Force -Attributes ReparsePoint)
+  # Hard-linked files share their contents with another copy that an update would change too.
+  $linked = @(Get-ChildItem -LiteralPath $destination -Recurse -Force |
+    Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $_.LinkType -eq 'HardLink' })
   if ($linked.Count -gt 0) {
     throw "The folder contains links ($($linked.FullName -join ', ')); nothing was changed."
   }
@@ -154,19 +156,21 @@ try {
   }
   $installed = Get-FileHashes $destination
   $installedManifest = Join-Path $destination 'manifest.json'
-  if ($installed.Count -gt 0) {
-    $installedName = if (Test-Path -LiteralPath $installedManifest) {
-      (Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json).name
-    }
-    if ($installedName -ne $manifest.name) {
-      throw "$destination is not empty and does not hold this extension; nothing was changed."
-    }
+  $installedName = if (Test-Path -LiteralPath $installedManifest -PathType Leaf) {
+    (Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json).name
+  }
+  if ($installedName -ne $manifest.name) {
+    throw "$destination does not hold this extension; nothing was changed. For a new install, unpack the zip instead."
   }
 
   # Save the current contents, hidden files included, and check the copy before changing anything.
   $backup = $null
   if ($installed.Count -gt 0) {
     $backupDir = Join-Path (Split-Path -Parent $destination) 'backups'
+    if ((Test-Path -LiteralPath $backupDir) -and
+        ((Get-Item -LiteralPath $backupDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "$backupDir is a link; nothing was changed."
+    }
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
     $installedVersion = (Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json).version
     $backup = Join-Path $backupDir "$(Split-Path -Leaf $destination)-v$installedVersion-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
