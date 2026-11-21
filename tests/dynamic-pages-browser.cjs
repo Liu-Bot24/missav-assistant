@@ -49,6 +49,12 @@ const only = process.argv[2];
         fixtureMetrics.fetches++;
         window.lastPageSignal = options.signal ?? null;
         const response = { ok: true, url: _url, text: async () => responseHtml };
+        if (fetchMode === 'chain') {
+          // Every following page holds only hidden cards and links one page further.
+          const n = fixtureMetrics.fetches;
+          const cards = `<div><div class="thumbnail"><a href="/cn/chain-${n}">Chain</a><span class="bottom-1 left-1">uncensored</span></div></div>`;
+          return { ok: true, url: _url, text: async () => `<!doctype html><nav><a href="/cn/genres">C</a><a href="/cn/actresses">P</a></nav><div class="grid">${cards}</div><a rel="next" href="/cn/archive/page${n + 2}">Next</a>` };
+        }
         if (fetchMode === 'connection') return new Promise(resolve => { window.releaseFetch = () => resolve(response); });
         if (fetchMode === 'body') return { ok: true, url: _url, text: () => new Promise(resolve => { window.releaseFetch = () => resolve(responseHtml); }) };
         return response;
@@ -110,6 +116,18 @@ const only = process.argv[2];
       assert.equal(await late.locator('[data-missav-filter-refill]').count(), 0);
       await late.close();
       console.log('PASS pausing cancels a page request in flight');
+    }
+    if (!only || only === 'limit') {
+      const page = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002', 'uncensored'), '/cn/archive/page2'), mode: 'chain' });
+      await page.waitForSelector('.missav-content-filter-retry', { timeout: 5000 });
+      assert.match(await page.locator('.missav-content-filter-retry').innerText(), /已往后查找 8 页.*继续查找/);
+      assert.equal(await page.evaluate(() => fixtureMetrics.fetches), 8);
+      await page.waitForTimeout(200);
+      assert.equal(await page.evaluate(() => fixtureMetrics.fetches), 8, 'stops at the limit until asked');
+      await page.locator('.missav-content-filter-retry').click();
+      await page.waitForFunction(() => fixtureMetrics.fetches === 16, null, { timeout: 5000 });
+      await page.close();
+      console.log('PASS an empty page explains the page limit and continues on request');
     }
     if (!only || only === 'import') {
       const relative = markup(`<div><div class="thumbnail"><a href="../sample-002">Duplicate</a><span class="bottom-1 left-1">ordinary</span></div></div><div data-id="sample-003"><div class="thumbnail"><a href="../sample-003">Relative</a><span class="bottom-1 left-1">ordinary</span><img data-src="./cover.svg" data-srcset="../small.svg 1x, ./large.svg 2x"><a class="unsafe" href="javascript:alert(1)">Unsafe</a></div></div>`);

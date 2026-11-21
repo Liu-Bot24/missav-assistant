@@ -65,6 +65,8 @@
   let paginationTask = null;
   let paginationNeedsRetry = false;
   let paginationRunKey = null;
+  // Set when the page limit was reached without filling the grid; the notice continues from here.
+  let paginationResumeUrl = null;
 
   function normalizeText(value) {
     return String(value ?? "")
@@ -594,7 +596,7 @@
 
   function updateMetadataNotices() {
     const activeGrids = new Set();
-    if (isFilteringActive() && (needsMetadata() || paginationNeedsRetry)) {
+    if (isFilteringActive() && (needsMetadata() || paginationNeedsRetry || paginationResumeUrl)) {
       const paginatedGrid = findPaginatedGrid(document);
       for (const grid of document.querySelectorAll("div.grid")) {
         const unresolved = new Set();
@@ -612,7 +614,8 @@
           for (const id of stalledPageIds) unresolved.add(id);
         }
         const pageFailed = paginationNeedsRetry && grid === paginatedGrid;
-        if (unresolved.size === 0 && !pageFailed) continue;
+        const pageLimit = Boolean(paginationResumeUrl) && grid === paginatedGrid;
+        if (unresolved.size === 0 && !pageFailed && !pageLimit) continue;
         activeGrids.add(grid);
         let notice = metadataNotices.get(grid);
         if (!notice) {
@@ -622,11 +625,13 @@
           grid.after(notice);
           metadataNotices.set(grid, notice);
         }
-        const text = unresolved.size === 0 ? "下一页未能加载。点击重试" : metadataFilteringEnabled()
-          ? `${unresolved.size} 部影片资料未能确认，暂未显示。点击重试`
-          : `${unresolved.size} 部影片姓名未能加载。点击重试`;
+        const limitOnly = unresolved.size === 0 && !pageFailed;
+        const text = limitOnly ? `已往后查找 ${MAX_REFILL_PAGES} 页，符合规则的影片仍不够一页。点击继续查找，或在设置中放宽规则`
+          : unresolved.size === 0 ? "下一页未能加载。点击重试" : metadataFilteringEnabled()
+            ? `${unresolved.size} 部影片资料未能确认，暂未显示。点击重试`
+            : `${unresolved.size} 部影片姓名未能加载。点击重试`;
         if (notice.textContent !== text) notice.textContent = text;
-        notice.onclick = () => retryMetadata([...unresolved]);
+        notice.onclick = limitOnly ? continuePagination : () => retryMetadata([...unresolved]);
       }
     }
     for (const [grid, notice] of metadataNotices) {
@@ -1033,7 +1038,8 @@
     if (!isFilteringActive() || revision !== filterRevision) return;
 
     const basePageUrl = location.href;
-    let nextPageUrl = getNextPageUrl(document, basePageUrl);
+    let nextPageUrl = paginationResumeUrl ?? getNextPageUrl(document, basePageUrl);
+    paginationResumeUrl = null;
     if (!nextPageUrl) return;
 
     const grid = findPaginatedGrid(document);
@@ -1093,10 +1099,21 @@
 
       nextPageUrl = getNextPageUrl(page.document, page.baseUrl);
     }
+    if (nextPageUrl && visibleCount < targetSize) {
+      paginationResumeUrl = nextPageUrl;
+      updateMetadataNotices();
+    }
+  }
+
+  function continuePagination() {
+    paginationRunKey = null;
+    scheduleScan();
   }
 
   function startPaginatedRefill(revision) {
     if (paginationNeedsRetry || paginationTask?.revision === revision) return;
+    // Stopped at the page limit: wait until the reader asks to continue.
+    if (paginationResumeUrl && paginationRunKey !== null) return;
     const grid = findPaginatedGrid(document);
     if (!grid || !getNextPageUrl(document, location.href)) return;
     const native = getGridItems(grid).filter(({ item }) => !item.hasAttribute(REFILL_ATTRIBUTE));
@@ -1191,7 +1208,7 @@
         setInfiniteStatus("已经到底了", "complete");
         infiniteObserver?.disconnect();
       } else if (appendedCount === 0) {
-        setInfiniteStatus("连续 8 页没有符合规则的内容，点击继续查找", "error");
+        setInfiniteStatus(`连续 ${MAX_REFILL_PAGES} 页没有符合规则的影片。点击继续查找，或在设置中放宽规则`, "error");
       } else {
         setInfiniteStatus("继续向下滚动", "idle");
         infiniteObserver?.unobserve(infiniteSentinel);
@@ -1508,6 +1525,7 @@
       cancelPageRequests();
       metadataClient.invalidateUnresolved();
       paginationRunKey = null;
+      paginationResumeUrl = null;
       paginationNeedsRetry = false;
       paginationTask = null;
       stalledPageIds.clear();
