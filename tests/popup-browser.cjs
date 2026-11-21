@@ -86,10 +86,10 @@ const root = path.join(__dirname, '..');
     assert.equal(await page.locator('#actressLimitEnabled').isChecked(), true);
     assert.equal(await page.locator('#showActressNames').isChecked(), true);
     // Reopening the popup after a reset still offers the undo until it expires.
-    for (const remaining of [8000, -1]) {
+    for (const [remaining, failFirstSave] of [[8000, false], [8000, true], [-1, false]]) {
       const reopened = await browser.newPage({ viewport: { width: 380, height: 600 } });
       reopened.on('pageerror', error => errors.push(error.message));
-      await reopened.addInitScript((remaining) => {
+      await reopened.addInitScript(({ remaining, failFirstSave }) => {
         window.saved = { settingsVersion: 2 };
         window.sessionSaved = { resetUndo: { settings: { hideUntagged: true, maxActresses: 7 }, expiresAt: Date.now() + remaining } };
         const area = (name) => ({
@@ -99,18 +99,33 @@ const root = path.join(__dirname, '..');
             cb(Object.fromEntries(list.filter((key) => Object.hasOwn(window[name], key) || Object.hasOwn(defaults, key))
               .map((key) => [key, Object.hasOwn(window[name], key) ? structuredClone(window[name][key]) : defaults[key]])));
           },
-          set(value, cb) { window[name] = { ...window[name], ...structuredClone(value) }; cb?.(); },
+          set(value, cb) {
+            if (name === 'saved' && window.failNextSave) {
+              window.failNextSave = false;
+              chrome.runtime.lastError = { message: 'fixture failure' };
+              cb?.();
+              chrome.runtime.lastError = null;
+              return;
+            }
+            window[name] = { ...window[name], ...structuredClone(value) }; cb?.();
+          },
           remove(keys, cb) { const next = { ...window[name] }; for (const key of [].concat(keys)) delete next[key]; window[name] = next; cb?.(); }
         });
-        window.chrome = { runtime: {},
+        window.failNextSave = failFirstSave;
+        window.chrome = { runtime: { lastError: null },
           tabs: { query(_options, callback) { callback([{ id: 1 }]); },
             sendMessage(_id, _message, callback) { callback({ compatible: true, metadata: "missav", pageKind: "list" }); } },
           storage: { local: area('saved'), session: area('sessionSaved'), onChanged: { addListener() {} } } };
-      }, remaining);
+      }, { remaining, failFirstSave });
       await reopened.goto(pathToFileURL(path.join(root, 'popup.html')).href);
       await reopened.waitForTimeout(100);
       if (remaining > 0) {
         assert.equal(await reopened.locator('#resetButton').textContent(), '撤销', 'the undo is still offered after reopening');
+        if (failFirstSave) {
+          await reopened.locator('#resetButton').click();
+          assert.equal(await reopened.locator('#resetButton').textContent(), '撤销', 'a failed restore can be tried again');
+          assert.equal(await reopened.evaluate(() => Object.hasOwn(window.sessionSaved, 'resetUndo')), true);
+        }
         await reopened.locator('#resetButton').click();
         assert.equal(await reopened.evaluate(() => window.saved.hideUntagged), true);
         assert.equal(await reopened.evaluate(() => window.saved.maxActresses), 7);

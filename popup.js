@@ -284,13 +284,16 @@
     }, Math.max(0, expiresAt - Date.now()));
   }
 
-  function persist(savedMessage = "已保存，页面将自动更新", keepUndo = false) {
+  function persist(savedMessage = "已保存，页面将自动更新", keepUndo = false, onSaved = () => {}) {
     if (!keepUndo) endUndo();
     settings = sanitizeSettings(settings);
     render();
     SettingsStore.save(settings, (error) => {
       if (error) showSaveState("保存失败，请再改一次", true);
-      else showSaveState(savedMessage, keepUndo);
+      else {
+        showSaveState(savedMessage, keepUndo);
+        onSaved();
+      }
     });
   }
 
@@ -396,8 +399,13 @@
 
   elements.resetButton.addEventListener("click", () => {
     if (undoSettings) {
-      settings = undoSettings;
-      persist("已撤销，设置已还原");
+      // The snapshot stays until the restored settings are saved, so a failed
+      // save can still be undone again.
+      settings = structuredClone(undoSettings);
+      persist("正在还原…", true, () => {
+        endUndo();
+        showSaveState("已撤销，设置已还原");
+      });
       return;
     }
     const previous = structuredClone(settings);
@@ -416,6 +424,8 @@
   SettingsStore.load((storedSettings) => {
     settings = storedSettings;
     render();
+    // Controls stay inactive until the stored settings are known.
+    for (const element of document.querySelectorAll("main, footer")) element.inert = false;
     readSyncCopy();
     sessionStorageApi?.get(UNDO_KEY, (stored) => {
       const saved = globalThis.chrome?.runtime?.lastError ? null : stored?.[UNDO_KEY];
