@@ -41,8 +41,14 @@
   };
 
   // Stored as category -> number of videos seen with it.
+  // Most used first; the picker offers the most used ones.
+  const MAX_OFFERED_CATEGORIES = 500;
   function categoryList(counts) {
-    return counts && typeof counts === "object" && !Array.isArray(counts) ? Object.keys(counts) : [];
+    if (!counts || typeof counts !== "object" || Array.isArray(counts)) return [];
+    return Object.entries(counts)
+      .sort((left, right) => Number(right[1]) - Number(left[1]) || left[0].localeCompare(right[0], "zh-CN"))
+      .slice(0, MAX_OFFERED_CATEGORIES)
+      .map(([value]) => value);
   }
 
   const normalizeForComparison = TextKey.normalize;

@@ -242,9 +242,11 @@
     ["可爱","可愛イ","可愛い","可爱","可愛"]
   ].map(([label, ...aliases]) => Object.freeze({ label, aliases: Object.freeze(aliases) })));
 
+  // Separators are ignored only to recognize a known category: "3P・4P",
+  // "3P、4P" and "3P/4P" are one category, but unknown values keep them.
+  const stripSeparators = (key) => key.replace(/[・、,/]+/g, "");
   function normalize(value) {
-    // "3P・4P", "3P、4P" and "3P/4P" are the same category.
-    return TextKey.normalize(value).replace(/[・、,/]+/g, "");
+    return stripSeparators(TextKey.normalize(value));
   }
 
   function groupRule(id) {
@@ -255,21 +257,28 @@
     return `value:${encodeURIComponent(String(value))}`;
   }
 
+  // The site's spellings come first, so a Chinese name never takes over
+  // another category's spelling; the Chinese name is recognized too.
   const typesByAlias = new Map();
-  for (const type of localizedTypes) {
-    for (const alias of type.aliases) {
-      const key = normalize(alias);
-      if (!typesByAlias.has(key)) typesByAlias.set(key, type);
+  for (const names of [(type) => type.aliases, (type) => [type.label]]) {
+    for (const type of localizedTypes) {
+      for (const name of names(type)) {
+        for (const key of [TextKey.normalize(name), normalize(name)]) {
+          if (!typesByAlias.has(key)) typesByAlias.set(key, type);
+        }
+      }
     }
   }
+  const typeOf = (value) => typesByAlias.get(TextKey.normalize(value)) ?? typesByAlias.get(normalize(value));
 
   function canonicalValue(value) {
-    return typesByAlias.get(normalize(value))?.aliases[0] ?? value;
+    return typeOf(value)?.aliases[0] ?? value;
   }
 
   // Every spelling of one category shares this key.
   function conceptKey(value) {
-    return normalize(canonicalValue(value));
+    const type = typeOf(value);
+    return type ? normalize(type.aliases[0]) : TextKey.normalize(value);
   }
 
   function decodeValueRule(rule) {
@@ -297,14 +306,13 @@
     const normalizedRule = normalizeRule(rule);
     if (!normalizedRule) return false;
 
-    const normalizedValues = (Array.isArray(metadataValues) ? metadataValues : [])
-      .map((value) => normalize(canonicalValue(value)))
-      .filter(Boolean);
+    const values = (Array.isArray(metadataValues) ? metadataValues : []).filter((value) => String(value).trim());
     const value = decodeValueRule(normalizedRule);
     if (value !== null) {
-      const normalizedValue = normalize(value);
-      return normalizedValues.some((item) => item === normalizedValue);
+      const ruleKey = conceptKey(value);
+      return values.some((item) => conceptKey(item) === ruleKey);
     }
+    const normalizedValues = values.map((item) => normalize(canonicalValue(item))).filter(Boolean);
 
     if (normalizedRule.startsWith("group:")) {
       const group = groups.find((item) => item.id === normalizedRule.slice(6));
@@ -320,23 +328,29 @@
     return false;
   }
 
+  // Categories seen on videos come first, most used first, as listed;
+  // the remaining known categories follow by name.
   function options(discoveredTypes = []) {
     const seen = new Set();
-    const values = [...seedTypes, ...discoveredTypes]
+    const rank = new Map();
+    const labelOf = (value) => typeOf(value)?.label ?? value;
+    const values = [...discoveredTypes, ...seedTypes]
       .map((value) => String(canonicalValue(value)).trim())
       .filter((value) => {
-        const key = normalize(value);
+        const key = conceptKey(value);
         // The site's own long-video category is offered as the duration rule instead.
-        if (key === normalize("4時間以上作品")) return false;
+        if (key === conceptKey("4時間以上作品")) return false;
         if (!key || seen.has(key)) return false;
         seen.add(key);
         return true;
-      })
-      .sort((left, right) => {
-        const leftLabel = typesByAlias.get(normalize(left))?.label ?? left;
-        const rightLabel = typesByAlias.get(normalize(right))?.label ?? right;
-        return leftLabel.localeCompare(rightLabel, "zh-CN");
       });
+    for (const value of discoveredTypes) {
+      const key = conceptKey(String(canonicalValue(value)).trim());
+      if (!rank.has(key)) rank.set(key, rank.size);
+    }
+    values.sort((left, right) =>
+      (rank.get(conceptKey(left)) ?? Infinity) - (rank.get(conceptKey(right)) ?? Infinity) ||
+      labelOf(left).localeCompare(labelOf(right), "zh-CN"));
 
     return [
       ...groups.map((group) => ({
@@ -347,10 +361,10 @@
       })),
       ...values.map((value) => ({
         rule: valueRule(value),
-        label: typesByAlias.get(normalize(value))?.label ?? value,
-        aliases: typesByAlias.get(normalize(value))?.aliases ?? [value],
+        label: labelOf(value),
+        aliases: typeOf(value)?.aliases ?? [value],
         // The site's own name, when the Chinese name differs from it.
-        description: (typesByAlias.get(normalize(value))?.label ?? value) === value ? "" : value,
+        description: labelOf(value) === value ? "" : value,
         kind: "value"
       }))
     ];

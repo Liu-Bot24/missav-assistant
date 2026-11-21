@@ -99,3 +99,24 @@ test("不同分类不会因为去掉标点而合并", () => {
   assert.equal(library.matches(library.valueRule("姉・妹"), ["姉"]), false);
   assert.equal(library.matches(library.valueRule("野外・露出"), ["露出"]), false);
 });
+
+test("中文名也能认出分类：旧规则与两种写法合为一项", () => {
+  const library = loadLibrary();
+  assert.equal(library.matches(library.valueRule("风俗"), ["風俗"]), true);
+  assert.equal(library.normalizeRule(library.valueRule("风俗")), library.valueRule("風俗"));
+  const values = library.options(["风俗", "風俗"]).filter((option) => option.kind === "value" && option.label === "风俗");
+  assert.equal(values.length, 1);
+});
+
+test("分隔符只在识别已知分类时忽略，未知分类保留原样区分", () => {
+  const library = loadLibrary();
+  assert.equal(library.matches(library.valueRule("3P/4P"), ["3P・4P"]), true);
+  assert.equal(library.matches(library.valueRule("1/2"), ["12"]), false);
+  assert.notEqual(library.conceptKey("1/2"), library.conceptKey("12"));
+});
+
+test("见过的分类按出现次数排在前面，其余已知分类按名称排列", () => {
+  const library = loadLibrary();
+  const values = library.options(["中出し", "素人"]).filter((option) => option.kind === "value").map((option) => option.rule);
+  assert.deepEqual(Array.from(values.slice(0, 2)), [library.valueRule("中出し"), library.valueRule("素人")]);
+});
