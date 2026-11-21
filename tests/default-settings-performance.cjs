@@ -18,7 +18,15 @@ async function run(browser, count) {
       item.innerHTML = `<div class="thumbnail"><a href="https://missav.ai/cn/abc-${i}">x</a><span class="bottom-1 left-1">中文字幕</span></div>`;
       grid.append(item);
     }
-    window.metrics = { messages: 0, computed: 0 };
+    window.metrics = { messages: 0, computed: 0, delayedSet: 0, delayedFired: 0 };
+    const nativeSetTimeout = window.setTimeout;
+    window.setTimeout = function (callback, delay, ...rest) {
+      if (typeof callback !== "function" || !(delay >= 500)) return nativeSetTimeout.call(this, callback, delay, ...rest);
+      metrics.delayedSet += 1;
+      return nativeSetTimeout.call(this, (...args) => {
+        try { callback(...args); } finally { metrics.delayedFired += 1; }
+      }, delay, ...rest);
+    };
     const computed = window.getComputedStyle;
     window.getComputedStyle = function (...args) { metrics.computed += 1; return computed.apply(this, args); };
     window.chrome = {
@@ -42,6 +50,17 @@ async function run(browser, count) {
       setTimeout(tick, 5);
     });
     const settleMs = performance.now() - start;
+    // The script scans once more a while after load. On a slow machine that
+    // scan can land after settling, and it is not the cost of one change, so
+    // the change is measured once the delayed timers have fired and reads stop.
+    await new Promise((resolve) => {
+      let last = -1;
+      const quiet = () => {
+        if (metrics.delayedFired >= metrics.delayedSet && metrics.computed === last) resolve();
+        else { last = metrics.computed; setTimeout(quiet, 100); }
+      };
+      quiet();
+    });
     const before = metrics.computed;
     const changeStart = performance.now();
     grid.firstElementChild.querySelector(".thumbnail").append(document.createElement("i"));
