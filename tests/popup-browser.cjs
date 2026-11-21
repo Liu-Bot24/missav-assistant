@@ -159,7 +159,7 @@ const root = path.join(__dirname, '..');
     many.on('pageerror', error => errors.push(error.message));
     await many.addInitScript(() => {
       const counts = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`common-${String(i).padStart(3, '0')}`, 5]));
-      const state = { settingsVersion: 2, discoveredCategories: { ...counts, 'rare-zero-cat': 0, 'エステマッサージ': 3 } };
+      const state = { settingsVersion: 2, discoveredCategories: { ...counts, 'rare-zero-cat': 0, 'エステマッサージ': 3, '女優ベスト・総集編': 10 } };
       const area = {
         get(keys, cb) {
           const list = Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(keys);
@@ -181,6 +181,10 @@ const root = path.join(__dirname, '..');
     assert.equal(await suggestions.count(), 1, 'a category outside the 500 most used is found by search');
     await many.locator('#categoryIncludeSearch').fill('エステマッサージ');
     assert.match(await suggestions.first().textContent(), /美容按摩/, "the site's spelling without the separator finds the category");
+    const chips = many.locator('#categoryIncludeField .selected-category-chip');
+    await many.locator('#categoryIncludeSearch').fill('ベスト、総集編');
+    await many.locator('#categoryIncludeSearch').press('Enter');
+    assert.equal((await chips.first().textContent()).replace('×', ''), '合集', 'Enter picks the category whose full name was typed');
     await many.close();
     const partial = await browser.newPage({ viewport: { width: 380, height: 600 } });
     await partial.addInitScript(() => {

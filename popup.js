@@ -113,10 +113,16 @@
     const picker = categoryPickerElements(mode);
     const query = searchKey(picker.input.value);
     if (!query) return offered.filter((option) => !picker.rules.includes(option.rule));
-    return all.filter((option) =>
-      !picker.rules.includes(option.rule) &&
-      [option.label, ...(option.aliases ?? [])].some((label) => searchKey(label).includes(query))
-    ).slice(0, MAX_OFFERED_CATEGORIES);
+    const exact = [];
+    const partial = [];
+    for (const option of all) {
+      if (picker.rules.includes(option.rule)) continue;
+      const names = [option.label, ...(option.aliases ?? [])].map(searchKey);
+      // A full name comes first, so Enter picks the category that was typed out.
+      if (names.includes(query)) exact.push(option);
+      else if (names.some((name) => name.includes(query))) partial.push(option);
+    }
+    return [...exact, ...partial].slice(0, MAX_OFFERED_CATEGORIES);
   }
 
   function renderSelectedCategoryRules(mode, options) {
