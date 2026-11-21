@@ -1089,7 +1089,7 @@
     if (!isFilteringActive() || revision !== filterRevision) return;
 
     const basePageUrl = currentListUrl();
-    let nextPageUrl = paginationResumeUrl ?? getNextPageUrl(document, location.href);
+    let nextPageUrl = paginationResumeUrl ?? getNextPageUrl(document, document.baseURI, location.origin);
     paginationResumeUrl = null;
     if (!nextPageUrl) return;
 
@@ -1167,7 +1167,7 @@
     // Stopped at the page limit: wait until the reader asks to continue.
     if (paginationResumeUrl && paginationRunKey !== null) return;
     const grid = findPaginatedGrid(document);
-    if (!grid || !getNextPageUrl(document, location.href)) return;
+    if (!grid || !getNextPageUrl(document, document.baseURI, location.origin)) return;
     const native = getGridItems(grid).filter(({ item }) => !item.hasAttribute(REFILL_ATTRIBUTE));
     if (native.some(({ card }) => {
       const item = findLayoutItem(card);
@@ -1286,8 +1286,9 @@
   function setupInfiniteScroll(revision) {
     if (infiniteObserver || !isFilteringActive() || !settings.infiniteScroll) return;
 
-    const basePageUrl = location.href;
-    const nextPageUrl = getNextPageUrl(document, basePageUrl);
+    // Links on the page resolve against its <base>, which may differ from its address.
+    const basePageUrl = document.baseURI;
+    const nextPageUrl = getNextPageUrl(document, basePageUrl, location.origin);
     const grid = findPaginatedGrid(document);
     if (!nextPageUrl || !grid) return;
 

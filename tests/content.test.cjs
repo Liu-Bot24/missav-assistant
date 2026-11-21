@@ -303,7 +303,9 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     },
     addEventListener() {}
   });
+  const pageUrl = runtimeOptions.url ?? "https://missav.ai/new?page=1";
   const document = makeDocument(root);
+  document.baseURI = pageUrl;
   const chrome = {
     runtime: {
       lastError: null,
@@ -345,7 +347,7 @@ function execute(root, storedSettings = {}, runtimeOptions = {}) {
     URL,
     AbortController,
     clearTimeout() {},
-    location: { href: runtimeOptions.url ?? "https://missav.ai/new?page=1" },
+    location: { href: pageUrl, origin: new URL(pageUrl).origin },
     fetch: async (url) => {
       fetchCalls.push(url);
       if (!runtimeOptions.pages?.[url]) return { ok: false, status: 404 };

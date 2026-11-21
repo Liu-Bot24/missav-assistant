@@ -228,6 +228,14 @@ const only = process.argv[2];
       await stops.close();
       console.log('PASS a next link is resolved against the source base and must stay on the site');
 
+      // The open page has its own base, so its first next link resolves against that too.
+      const ownBase = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002'), 'page2')
+        .replace('<meta charset="utf-8">', '<meta charset="utf-8"><base href="/cn/archive/">') });
+      await ownBase.waitForSelector('[data-id="sample-003"]', { timeout: 5000 });
+      assert.deepEqual(await ownBase.evaluate(() => fixtureMetrics.urls), [`${origin}/cn/archive/page2`]);
+      await ownBase.close();
+      console.log("PASS the open page's next link follows its own base");
+
       // The page's CSS hides this badge; only the inserted card can show that.
       const styled = markup(`<div data-id="sample-005"><div class="thumbnail"><a href="/cn/sample-005">Styled</a><span class="bottom-1 left-1 gone">ordinary</span></div></div>${card('sample-006')}`)
         .replace('<style>', '<style>.gone{display:none}');
