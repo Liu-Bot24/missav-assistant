@@ -59,11 +59,15 @@ function createCacheHarness(initialState = {}, options = {}) {
       metrics.fetches += 1;
       if (metrics.fetches <= failures) throw new Error("fixture network failure");
       await new Promise(setImmediate);
-      return { ok: true, json: async () => JSON.parse(requestOptions.body).requests.map((request) => ({
-        code: 200, json: { recomms: [{ id: request.params.searchQuery,
-          values: { genres: ["sample"], tags: [], type: "sample", duration: 15000,
-            actresses: options.actresses ?? ["松本いちか", "松本一香"], ...options.values } }] }
-      })) };
+      return { ok: true, json: async () => JSON.parse(requestOptions.body).requests.map((request) => {
+        const id = request.params.searchQuery;
+        const answer = options.responses?.[id];
+        if (answer === "missing") return { code: 200, json: { recomms: [] } };
+        const values = { genres: ["sample"], tags: [], type: "sample", duration: 15000,
+          actresses: options.actresses ?? ["松本いちか", "松本一香"], ...options.values };
+        if (answer === "incomplete") delete values.actresses;
+        return { code: 200, json: { recomms: [{ id, values }] } };
+      }) };
     },
     chrome: {
       runtime: { onMessage: { addListener(fn) { listener = fn; } } },
@@ -350,18 +354,42 @@ test("旧分类列表按已缓存影片重建：按出现次数计数、合并�
   assert.equal(Object.hasOwn(harness.state, "discoveredTypes"), false);
 });
 
-test("分类列表满 500 项时淘汰最少出现的，常见分类保留", async () => {
-  const common = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`常见-${i}`, 5]));
+test("分类计数保留远多于弹窗显示的数量，新分类可以逐步升上来", async () => {
+  const common = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`常见-${i}`, 2]));
   const harness = createCacheHarness({ discoveredCategories: common }, { values: { genres: ["新出现"], tags: [] } });
-  await harness.query(["n-001", "n-002"]);
-  const counts = harness.state.discoveredCategories;
-  assert.equal(Object.keys(counts).length, 500);
-  assert.equal(counts["新出现"], undefined, "只出现两次的新分类不挤掉出现五次的");
-  const rising = createCacheHarness({ discoveredCategories: { ...common, "常见-0": 1 } },
-    { values: { genres: ["新出现"], tags: [] } });
-  await rising.query(["n-001", "n-002"]);
-  assert.equal(rising.state.discoveredCategories["新出现"], 2);
-  assert.equal(rising.state.discoveredCategories["常见-0"], undefined);
+  await harness.query(["n-001", "n-002", "n-003"]);
+  assert.equal(harness.state.discoveredCategories["新出现"], 3, "新分类即使列表已有 500 项也开始计数");
+  assert.equal(Object.keys(harness.state.discoveredCategories).length, 501);
+  const full = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`常见-${i}`, 5]));
+  const capped = createCacheHarness({ discoveredCategories: full }, { values: { genres: ["新出现"], tags: [] } });
+  await capped.query(["n-001"]);
+  assert.equal(Object.keys(capped.state.discoveredCategories).length, 5000, "存储仍有上限");
+  assert.equal(capped.state.discoveredCategories["新出现"], undefined, "满额时最少出现的让位");
+});
+
+test("过期影片刷新时不重复计入分类次数", async () => {
+  const harness = createCacheHarness({
+    discoveredCategories: { sample: 1 },
+    "md:old-001": sampleRecord(Date.now() - 8 * 24 * 60 * 60 * 1000)
+  });
+  await harness.query(["old-001"]);
+  assert.equal(harness.metrics.fetches, 1);
+  assert.equal(harness.state.discoveredCategories.sample, 1);
+  await harness.query(["new-001"]);
+  assert.equal(harness.state.discoveredCategories.sample, 2, "第一次缓存的影片照常计数");
+});
+
+test("刷新得到不完整资料时继续用完整的旧记录；分类服务明确查无此片时删除旧记录", async () => {
+  const stale = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  const harness = createCacheHarness({
+    "md:partial-001": { ...sampleRecord(stale), duration: 1 },
+    "md:gone-001": { ...sampleRecord(stale), duration: 1 }
+  }, { responses: { "partial-001": "incomplete", "gone-001": "missing" } });
+  const response = await harness.query(["partial-001", "gone-001"]);
+  assert.equal(response.items["partial-001"].duration, 1, "不完整的新答复不取代完整旧资料");
+  assert.equal(response.items["gone-001"], null);
+  assert.equal(Object.hasOwn(harness.state, "md:gone-001"), false, "已撤下的影片不再保留旧资料");
+  assert.equal(harness.state["md:partial-001"].duration, 1);
 });
 
 test("未适配域名不能调用原站分类库，包括名称相似的域名", () => {

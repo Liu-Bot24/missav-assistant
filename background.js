@@ -18,7 +18,9 @@ const DISCOVERED_CATEGORIES_KEY = "discoveredCategories";
 const LEGACY_DISCOVERED_KEY = "discoveredTypes";
 // Earlier versions also stored the cache size; it is now kept in memory only.
 const LEGACY_CACHE_COUNT_KEY = "metadataCacheCount";
-const MAX_DISCOVERED_CATEGORIES = 500;
+// Counts are kept for many more categories than the picker offers, so a
+// category that becomes common can still rise into it.
+const MAX_DISCOVERED_CATEGORIES = 5000;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
 chrome.runtime.onInstalled?.addListener(() => {
@@ -227,6 +229,15 @@ function saveMetadataCache(metadataById, absentIds) {
   return metadataCacheWrite;
 }
 
+function forgetMetadata(ids) {
+  metadataCacheWrite = metadataCacheWrite.catch(() => {}).then(async () => {
+    await prepareMetadataCache();
+    await chrome.storage.local.remove(ids.map(metadataKey));
+    metadataCacheCount = Math.max(0, metadataCacheCount - ids.length);
+  });
+  return metadataCacheWrite;
+}
+
 async function queryMetadata(itemIds) {
   const ids = normalizeItemIds(itemIds);
   if (ids.length === 0) return {};
@@ -259,7 +270,12 @@ async function queryMetadata(itemIds) {
       // A failed refresh leaves the IDs out; stale records then still answer.
       const pending = fetchMetadata(newIds).catch(() => ({})).then(async (fetched) => {
         await saveMetadataCache(fetched, absentIds).catch(() => {});
-        await recordCategories(fetched).catch(() => {});
+        // The service no longer has these videos; their old records go.
+        const withdrawn = newIds.filter((id) => fetched[id] === null && !absentIds.has(id));
+        if (withdrawn.length > 0) await forgetMetadata(withdrawn).catch(() => {});
+        // A video counts toward the category list once, when it is first cached.
+        const added = Object.fromEntries(Object.entries(fetched).filter(([id]) => absentIds.has(id)));
+        await recordCategories(added).catch(() => {});
         return fetched;
       }).finally(() => {
         for (const id of newIds) metadataInFlight.delete(id);
@@ -268,8 +284,10 @@ async function queryMetadata(itemIds) {
     }
     const fetchedPairs = await Promise.all(missingIds.map(async (id) => {
       const fetched = await metadataInFlight.get(id);
-      if (Object.hasOwn(fetched, id)) return [id, fetched[id]];
-      return staleById[id] ? [id, staleById[id]] : null;
+      if (!Object.hasOwn(fetched, id)) return staleById[id] ? [id, staleById[id]] : null;
+      // An incomplete answer does not replace complete older data.
+      if (fetched[id] !== null && !isCompleteMetadata(fetched[id]) && staleById[id]) return [id, staleById[id]];
+      return [id, fetched[id]];
     }));
     Object.assign(metadataById, Object.fromEntries(fetchedPairs.filter(Boolean)));
   }
