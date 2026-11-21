@@ -4,18 +4,26 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { launch } = require('./browser.cjs');
 const root = path.join(__dirname, "..");
-const library = fs.readFileSync(path.join(root, "category-library.js"), "utf8");
-const css = fs.readFileSync(path.join(root, "content.css"), "utf8");
-const current = fs.readFileSync(path.join(root, "content.js"), "utf8");
+// Everything a page loads, from the working copy or from one commit.
+const SUPPORT_SCRIPTS = ["text.js", "site-library.js", "label-library.js", "metadata-client.js", "category-library.js", "settings.js"];
+function loadBuild(ref) {
+  const read = (file) => ref
+    ? execFileSync("git", ["show", `${ref}:${file}`], { cwd: root, encoding: "utf8" })
+    : fs.readFileSync(path.join(root, file), "utf8");
+  const content = read("content.js");
+  if (ref && !content.includes("viewing-assistant-hidden")) {
+    throw new Error(`${ref} predates the current storage keys and page markers; compare with a later commit.`);
+  }
+  return { content, css: read("content.css"), scripts: SUPPORT_SCRIPTS.map(read) };
+}
+const current = loadBuild(null);
 // An optional ref enables comparison; the default check needs no old history.
-const baseline = process.env.PERFORMANCE_BASELINE
-  ? execFileSync("git", ["show", `${process.env.PERFORMANCE_BASELINE}:content.js`], { cwd: root, encoding: "utf8" })
-  : null;
+const baseline = process.env.PERFORMANCE_BASELINE ? loadBuild(process.env.PERFORMANCE_BASELINE) : null;
 if (process.argv.includes("baseline") && !baseline) {
   throw new Error("Set PERFORMANCE_BASELINE to the Git ref to measure.");
 }
 
-async function install(page, source, count, home = false, slow = false) {
+async function install(page, build, count, home = false, slow = false) {
   if (page.url() === "about:blank") {
     await page.route('https://missav.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
     await page.goto('https://missav.ai/new');
@@ -23,7 +31,7 @@ async function install(page, source, count, home = false, slow = false) {
   await page.setContent(`<!doctype html><style>
     .grid { display:grid;grid-template-columns:repeat(4,1fr);gap:8px }
     .card { padding:8px;border:1px solid #888 }
-    ${css}</style><main><div class="grid" id="grid"></div>
+    ${build.css}</style><main><div class="grid" id="grid"></div>
     ${home ? '<button id="more">载入更多</button>' : ""}</main>`);
   await page.evaluate(({ count, home, slow }) => {
     window.makeCard = (id, blocked = false) => {
@@ -52,12 +60,10 @@ async function install(page, source, count, home = false, slow = false) {
       storage: (() => {
         const stored = { actressLimitEnabled: false, showActressNames: false,
           hiddenLabels: ["chinese-subtitle"], categoryExcludeRules: home ? ["value:blocked"] : [] };
-        // Current builds read the local area; an optional baseline build may read sync.
         return {
           local: { get(_keys, callback) { callback({ settingsVersion: 2, ...stored }); } },
-          sync: { get(defaults, callback) { callback({ ...defaults, ...stored }); } },
           onChanged: { addListener(listener) {
-            window.changeSettings = (changes) => { listener(changes, "local"); listener(changes, "sync"); };
+            window.changeSettings = (changes) => { listener(changes, "local"); };
           } }
         };
       })()
@@ -74,13 +80,7 @@ async function install(page, source, count, home = false, slow = false) {
       }, 30);
     });
   }, { count, home, slow });
-  if (source === baseline) await page.evaluate(() => document.documentElement.setAttribute("data-viewing-assistant", ""));
-  await page.addScriptTag({ path: path.join(root, "text.js") });
-  await page.addScriptTag({ path: path.join(root, "site-library.js") });
-  await page.addScriptTag({ path: path.join(root, "label-library.js") });
-  await page.addScriptTag({ path: path.join(root, "metadata-client.js") });
-  await page.addScriptTag({ content: library });
-  await page.addScriptTag({ path: path.join(root, "settings.js") });
+  for (const script of build.scripts) await page.addScriptTag({ content: script });
   return page.evaluate(async (source) => {
     const start = performance.now();
     (0, eval)(source);
@@ -101,7 +101,7 @@ async function install(page, source, count, home = false, slow = false) {
     requestAnimationFrame(sample);
     await new Promise((resolve) => setTimeout(resolve, 0));
     return { ms: performance.now() - start, gridEnumerations: metrics.gridEnumerations };
-  }, source);
+  }, build.content);
 }
 
 async function measure(browser, source, count) {
