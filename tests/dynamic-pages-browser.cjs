@@ -197,6 +197,18 @@ const only = process.argv[2];
       await based.close();
       console.log('PASS imported covers follow a base on another host');
 
+      // A relative next link under that base leaves the site, so paging stops there.
+      const offsite = markup(card('sample-001', 'uncensored') + card('sample-008'), 'page3')
+        .replace('<meta charset="utf-8">', '<meta charset="utf-8"><base href="https://media.example.test/assets/">')
+        .replace('href="/cn/sample-008"', `href="${origin}/cn/sample-008"`);
+      const stops = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002', 'uncensored') + card('sample-009'), '/cn/archive/page2'), responseHtml: offsite });
+      await stops.waitForSelector('[data-id="sample-008"]', { timeout: 5000 });
+      await stops.waitForTimeout(500);
+      assert.deepEqual(await stops.evaluate(() => fixtureMetrics.urls), [`${origin}/cn/archive/page2`], 'no request to a page the base does not point to');
+      await stops.close();
+      console.log('PASS a next link is resolved against the source base and must stay on the site');
+
+
       // The page's CSS hides this badge; only the inserted card can show that.
       const styled = markup(`<div data-id="sample-005"><div class="thumbnail"><a href="/cn/sample-005">Styled</a><span class="bottom-1 left-1 gone">ordinary</span></div></div>${card('sample-006')}`)
         .replace('<style>', '<style>.gone{display:none}');

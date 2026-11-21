@@ -423,13 +423,13 @@
       .find((grid) => getGridItems(grid).length > 0) ?? null;
   }
 
-  function getNextPageUrl(root, baseUrl) {
+  function getNextPageUrl(root, baseUrl, origin = null) {
     const href = root.querySelector('a[rel="next"][href]')?.getAttribute("href");
     if (!href) return null;
 
     try {
       const target = new URL(href, baseUrl);
-      return target.origin === new URL(baseUrl).origin ? target.href : null;
+      return target.origin === (origin ?? new URL(baseUrl).origin) ? target.href : null;
     } catch {
       return null;
     }
@@ -1077,7 +1077,7 @@
     const baseUrl = (baseHref && resolveImportedUrl(baseHref, page.sourceUrl, pageOrigin)) || page.sourceUrl;
     for (const { item } of getGridItems(grid)) normalizeImportedUrls(item, documentBase, pageOrigin);
     rememberPage(url, page);
-    return { document: parsed, grid, baseUrl };
+    return { document: parsed, grid, baseUrl, nextUrl: getNextPageUrl(parsed, documentBase, pageOrigin) };
   }
 
   async function refillPaginatedGrid(revision) {
@@ -1144,7 +1144,7 @@
         return;
       }
 
-      nextPageUrl = getNextPageUrl(page.document, page.baseUrl);
+      nextPageUrl = page.nextUrl;
     }
     if (nextPageUrl && visibleCount < targetSize) {
       paginationResumeUrl = nextPageUrl;
@@ -1226,7 +1226,7 @@
         }
 
         checkedPages += 1;
-        const nextPageUrl = getNextPageUrl(page.document, page.baseUrl);
+        const nextPageUrl = page.nextUrl;
         const result = await processPageEntries(
           getGridItems(page.grid),
           page.baseUrl,
