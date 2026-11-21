@@ -11,7 +11,9 @@
       Makes an installed extension folder match the package. The folder stays where
       it is, so the browser keeps treating it as the same extension and keeps its
       settings. Its previous contents are saved as a zip in a "backups" folder next
-      to it; files the package no longer has go to the Recycle Bin.
+      to it; files the package no longer has go to the Recycle Bin. If the update
+      fails, the previous contents are put back. The folder must already exist and
+      hold this extension; it may not be a source checkout or contain links.
 #>
 param(
   [Parameter(Mandatory, Position = 0)][ValidateSet('zip', 'sync')][string]$Command,
@@ -30,17 +32,18 @@ function Invoke-Git {
 
 # Everything the browser loads, plus the notices and the source and script
 # that rebuild the performer data.
-function Get-PackageFiles {
-  @(Invoke-Git ls-tree -r --name-only HEAD | Where-Object {
+function Get-PackageFiles([string]$Commit) {
+  @(Invoke-Git ls-tree -r --name-only $Commit | Where-Object {
       ($_ -notmatch '/' -and $_ -match '\.(js|css|html)$') -or
       $_ -in @('manifest.json', 'README.md', 'THIRD_PARTY_NOTICES.md', 'scripts/build-actress-data.ps1') -or
       $_ -like 'icons/*' -or $_ -like 'third-party/*'
     } | Sort-Object)
 }
 
+# Hidden files count too.
 function Get-FileHashes([string]$Root) {
   $hashes = @{}
-  Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
+  Get-ChildItem -LiteralPath $Root -Recurse -File -Force | ForEach-Object {
     $relative = [IO.Path]::GetRelativePath($Root, $_.FullName).Replace('\', '/')
     $hashes[$relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
   }
@@ -77,8 +80,10 @@ function Assert-References([string]$Root, [string[]]$Files) {
   $manifest
 }
 
-$files = Get-PackageFiles
-$commit = (Invoke-Git rev-parse --short HEAD) | Select-Object -First 1
+# Every read below uses this one commit, even if another commit lands meanwhile.
+$sha = (Invoke-Git rev-parse --verify 'HEAD^{commit}') | Select-Object -First 1
+$commit = $sha.Substring(0, 7)
+$files = Get-PackageFiles $sha
 $uncommitted = @(Invoke-Git status --porcelain -- @files)
 if ($uncommitted.Count -gt 0) {
   Write-Warning "These uncommitted changes are not included:`n$($uncommitted -join "`n")"
@@ -89,10 +94,10 @@ $staging = Join-Path $work $packageName
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
   $archive = Join-Path $work 'package.zip'
-  Invoke-Git archive --format=zip "--prefix=$packageName/" -o $archive HEAD -- @files | Out-Null
+  Invoke-Git archive --format=zip "--prefix=$packageName/" -o $archive $sha -- @files | Out-Null
   Expand-Archive -LiteralPath $archive -DestinationPath $work
   $manifest = Assert-References $staging $files
-  $packageVersion = ((Invoke-Git show HEAD:package.json) -join "`n" | ConvertFrom-Json).version
+  $packageVersion = ((Invoke-Git show "${sha}:package.json") -join "`n" | ConvertFrom-Json).version
   if ($manifest.version -ne $packageVersion) {
     throw "manifest.json version $($manifest.version) differs from package.json version $packageVersion"
   }
@@ -125,47 +130,85 @@ try {
   }
 
   $destination = [IO.Path]::GetFullPath($Target).TrimEnd('\')
+  if (-not (Test-Path -LiteralPath $destination -PathType Container)) {
+    throw "$destination does not exist. For a new install, unpack the zip instead; sync updates an installed folder."
+  }
+  # Links could make the folder, or a folder inside it, point somewhere else.
+  for ($path = $destination; $path; $path = Split-Path -Parent $path) {
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      throw "$path is a link; sync only updates a plain folder. Nothing was changed."
+    }
+  }
+  $linked = @(Get-ChildItem -LiteralPath $destination -Recurse -Force -Attributes ReparsePoint)
+  if ($linked.Count -gt 0) {
+    throw "The folder contains links ($($linked.FullName -join ', ')); nothing was changed."
+  }
   $projectRoot = $project.TrimEnd('\')
   if ($destination -eq $projectRoot -or $destination.StartsWith("$projectRoot\", [StringComparison]::OrdinalIgnoreCase) -or
       $projectRoot.StartsWith("$destination\", [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The extension folder must be outside the project.'
   }
-  $existing = @(if (Test-Path -LiteralPath $destination) { Get-ChildItem -LiteralPath $destination -Force })
-  if ($existing.Count -gt 0) {
-    $installedManifest = Join-Path $destination 'manifest.json'
+  $sourceMarkers = @('.git', 'package.json', 'tests') | Where-Object { Test-Path -LiteralPath (Join-Path $destination $_) }
+  if ($sourceMarkers) {
+    throw "$destination looks like a source checkout ($($sourceMarkers -join ', ')); nothing was changed."
+  }
+  $installed = Get-FileHashes $destination
+  $installedManifest = Join-Path $destination 'manifest.json'
+  if ($installed.Count -gt 0) {
     $installedName = if (Test-Path -LiteralPath $installedManifest) {
       (Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json).name
     }
     if ($installedName -ne $manifest.name) {
       throw "$destination is not empty and does not hold this extension; nothing was changed."
     }
+  }
+
+  # Save the current contents, hidden files included, and check the copy before changing anything.
+  $backup = $null
+  if ($installed.Count -gt 0) {
     $backupDir = Join-Path (Split-Path -Parent $destination) 'backups'
     New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
     $installedVersion = (Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json).version
     $backup = Join-Path $backupDir "$(Split-Path -Leaf $destination)-v$installedVersion-$(Get-Date -Format 'yyyyMMdd-HHmmss').zip"
-    Compress-Archive -Path (Join-Path $destination '*') -DestinationPath $backup
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::CreateFromDirectory($destination, $backup)
+    $backupCheck = Join-Path $work 'backup-check'
+    [IO.Compression.ZipFile]::ExtractToDirectory($backup, $backupCheck)
+    Assert-SameFiles $installed (Get-FileHashes $backupCheck) $backup
     Write-Output "Saved the previous contents to $backup"
-  } else {
-    New-Item -ItemType Directory -Force -Path $destination | Out-Null
   }
 
   Add-Type -AssemblyName Microsoft.VisualBasic
   $recycle = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
   $dialogs = [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs
-  $installed = Get-FileHashes $destination
-  foreach ($relative in @($installed.Keys | Where-Object { -not $expected.ContainsKey($_) } | Sort-Object)) {
-    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile((Join-Path $destination $relative), $dialogs, $recycle)
-    Write-Output "Moved to the Recycle Bin: $relative"
+  function Set-FolderContents([string]$From, [hashtable]$Wanted) {
+    foreach ($relative in @((Get-FileHashes $destination).Keys | Where-Object { -not $Wanted.ContainsKey($_) } | Sort-Object)) {
+      [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile((Join-Path $destination $relative), $dialogs, $recycle)
+      Write-Output "Moved to the Recycle Bin: $relative"
+    }
+    Get-ChildItem -LiteralPath $destination -Recurse -Directory -Force | Sort-Object { $_.FullName.Length } -Descending |
+      Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } |
+      ForEach-Object { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($_.FullName, $dialogs, $recycle) }
+    # Only files that differ are written, so an unchanged file never blocks a restore.
+    $current = Get-FileHashes $destination
+    foreach ($relative in @($Wanted.Keys | Where-Object { $current[$_] -ne $Wanted[$_] })) {
+      $to = Join-Path $destination $relative
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+      Copy-Item -LiteralPath (Join-Path $From $relative) -Destination $to -Force
+    }
+    Assert-SameFiles $Wanted (Get-FileHashes $destination) $destination
   }
-  Get-ChildItem -LiteralPath $destination -Recurse -Directory | Sort-Object { $_.FullName.Length } -Descending |
-    Where-Object { -not (Get-ChildItem -LiteralPath $_.FullName -Force) } |
-    ForEach-Object { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($_.FullName, $dialogs, $recycle) }
-  foreach ($relative in $expected.Keys) {
-    $to = Join-Path $destination $relative
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
-    Copy-Item -LiteralPath (Join-Path $staging $relative) -Destination $to -Force
+
+  try {
+    Set-FolderContents $staging $expected
+  } catch {
+    # Put the previous version back so the browser never loads a mix of both.
+    if ($backup) {
+      Write-Warning "The update failed ($($_.Exception.Message)); restoring the previous contents."
+      Set-FolderContents $backupCheck $installed
+    }
+    throw
   }
-  Assert-SameFiles $expected (Get-FileHashes $destination) $destination
   Write-Output "Updated $destination to version $($manifest.version) ($commit, $($files.Count) files). Reload the extension in the browser."
 } finally {
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
