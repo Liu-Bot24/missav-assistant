@@ -259,17 +259,23 @@
 
   // The site's spellings come first, so a Chinese name never takes over
   // another category's spelling; the Chinese name is recognized too.
+  // Separator-free keys are kept only for names that contain separators, so
+  // "3P/4P" finds "3P・4P" while an unknown "6/9" does not become "69".
   const typesByAlias = new Map();
+  const typesBySeparatorFreeName = new Map();
   for (const names of [(type) => type.aliases, (type) => [type.label]]) {
     for (const type of localizedTypes) {
       for (const name of names(type)) {
-        for (const key of [TextKey.normalize(name), normalize(name)]) {
-          if (!typesByAlias.has(key)) typesByAlias.set(key, type);
+        const key = TextKey.normalize(name);
+        if (!typesByAlias.has(key)) typesByAlias.set(key, type);
+        if (normalize(name) !== key && !typesBySeparatorFreeName.has(normalize(name))) {
+          typesBySeparatorFreeName.set(normalize(name), type);
         }
       }
     }
   }
-  const typeOf = (value) => typesByAlias.get(TextKey.normalize(value)) ?? typesByAlias.get(normalize(value));
+  const typeOf = (value) => typesByAlias.get(TextKey.normalize(value)) ??
+    (normalize(value) !== TextKey.normalize(value) ? typesBySeparatorFreeName.get(normalize(value)) : undefined);
 
   function canonicalValue(value) {
     return typeOf(value)?.aliases[0] ?? value;
