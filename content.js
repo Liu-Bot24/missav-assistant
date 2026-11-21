@@ -692,14 +692,19 @@
     topologyRevision += 1;
   }
 
+  // A jump to an anchor stays on the same list.
+  const currentListUrl = () => location.href.split("#")[0];
+
   function filterCurrentDocument() {
     let cards = [...document.querySelectorAll("div.thumbnail")];
-    const listUrl = location.href.split("#")[0];
+    const listUrl = currentListUrl();
     if (lastScannedUrl !== null && lastScannedUrl !== listUrl) {
       forgetListWork();
       teardownInfiniteScroll();
       removeRefillItems();
       cards = [...document.querySelectorAll("div.thumbnail")];
+      // This pass ends with the old revision; the new list needs its own.
+      scheduleScan();
     }
     if (fullScanPending || lastScannedUrl !== listUrl) {
       fullScanPending = false;
@@ -1083,8 +1088,8 @@
   async function refillPaginatedGrid(revision) {
     if (!isFilteringActive() || revision !== filterRevision) return;
 
-    const basePageUrl = location.href;
-    let nextPageUrl = paginationResumeUrl ?? getNextPageUrl(document, basePageUrl);
+    const basePageUrl = currentListUrl();
+    let nextPageUrl = paginationResumeUrl ?? getNextPageUrl(document, location.href);
     paginationResumeUrl = null;
     if (!nextPageUrl) return;
 
@@ -1112,7 +1117,7 @@
     ) {
       if (
         revision !== filterRevision ||
-        location.href !== basePageUrl ||
+        currentListUrl() !== basePageUrl ||
         visitedPages.has(nextPageUrl)
       ) {
         return;
@@ -1120,7 +1125,7 @@
 
       visitedPages.add(nextPageUrl);
       const page = await fetchPageDocument(nextPageUrl);
-      if (revision !== filterRevision || location.href !== basePageUrl) return;
+      if (revision !== filterRevision || currentListUrl() !== basePageUrl) return;
       // A retry continues from the page that failed, not from the first page.
       if (!page) { paginationResumeUrl = nextPageUrl; paginationNeedsRetry = true; return; }
 

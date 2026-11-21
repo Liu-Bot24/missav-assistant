@@ -173,6 +173,26 @@ const only = process.argv[2];
       assert.equal(await spa.locator('.viewing-assistant-retry').count(), 0, 'the old list notice is gone');
       await spa.close();
       console.log('PASS switching lists in the same document drops the old list work');
+
+      // A list that needed nothing switches to one that needs a refill.
+      const quiet = await fixture({ html: markup(card('sample-001') + card('sample-002')) });
+      await quiet.waitForTimeout(1000); // Past the delayed load scan.
+      await quiet.evaluate(() => {
+        history.pushState(null, '', '/cn/other');
+        document.querySelector('div.grid').innerHTML = `<div data-id="other-001"><div class="thumbnail"><a href="/cn/other-001">O</a><span class="bottom-1 left-1">uncensored</span></div></div><div data-id="other-002"><div class="thumbnail"><a href="/cn/other-002">O</a><span class="bottom-1 left-1">ordinary</span></div></div>`;
+        document.body.insertAdjacentHTML('beforeend', '<a rel="next" href="/cn/other/page2">Next</a>');
+      });
+      await quiet.waitForSelector('[data-id="sample-003"]', { timeout: 3000 });
+      await quiet.close();
+      console.log('PASS a new list in the same document starts its own refill');
+
+      // An anchor jump while the next page loads stays on the same list.
+      const anchored = await fixture({ html: markup(card('sample-001', 'uncensored') + card('sample-002'), '/cn/archive/page2'), mode: 'connection' });
+      await anchored.waitForFunction(() => !!window.releaseFetch);
+      await anchored.evaluate(() => { location.hash = 'top'; releaseFetch(); });
+      await anchored.waitForSelector('[data-id="sample-003"]', { timeout: 3000 });
+      await anchored.close();
+      console.log('PASS an anchor jump does not discard the page being loaded');
     }
     if (!only || only === 'import') {
       const relative = markup(`<div><div class="thumbnail"><a href="../sample-002">Duplicate</a><span class="bottom-1 left-1">ordinary</span></div></div><div data-id="sample-003"><div class="thumbnail"><a href="../sample-003">Relative</a><span class="bottom-1 left-1">ordinary</span><img data-src="./cover.svg" data-srcset="../small.svg 1x, ./large.svg 2x"><a class="unsafe" href="javascript:alert(1)">Unsafe</a></div></div>`);
@@ -207,7 +227,6 @@ const only = process.argv[2];
       assert.deepEqual(await stops.evaluate(() => fixtureMetrics.urls), [`${origin}/cn/archive/page2`], 'no request to a page the base does not point to');
       await stops.close();
       console.log('PASS a next link is resolved against the source base and must stay on the site');
-
 
       // The page's CSS hides this badge; only the inserted card can show that.
       const styled = markup(`<div data-id="sample-005"><div class="thumbnail"><a href="/cn/sample-005">Styled</a><span class="bottom-1 left-1 gone">ordinary</span></div></div>${card('sample-006')}`)
