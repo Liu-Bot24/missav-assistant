@@ -135,6 +135,25 @@ const root = path.join(__dirname, '..');
       }
       await reopened.close();
     }
+    // Earlier preferences that could not be migrated yet: a reset would leave them in place.
+    const pending = await browser.newPage({ viewport: { width: 380, height: 600 } });
+    pending.on('pageerror', error => errors.push(error.message));
+    await pending.addInitScript(() => {
+      window.saved = { hideUntagged: true };
+      const area = (state, fail) => ({
+        get(_keys, cb) { setTimeout(() => { if (fail) chrome.runtime.lastError = { message: 'fixture failure' }; cb(structuredClone(state)); chrome.runtime.lastError = null; }); },
+        set(value, cb) { Object.assign(state, structuredClone(value)); cb?.(); },
+        remove(_keys, cb) { cb?.(); }
+      });
+      window.chrome = { runtime: { lastError: null },
+        tabs: { query(_options, cb) { cb([{ id: 1 }]); }, sendMessage(_id, _msg, cb) { cb({ compatible: true, metadata: 'missav', pageKind: 'list' }); } },
+        storage: { local: area(window.saved, false), sync: area({ blockedPresets: ['chinese-subtitle'] }, true), onChanged: { addListener() {} } } };
+    });
+    await pending.goto(pathToFileURL(path.join(root, 'popup.html')).href);
+    await pending.waitForTimeout(100);
+    assert.equal(await pending.locator('#hideUntagged').isChecked(), true);
+    assert.equal(await pending.locator('#resetButton').isDisabled(), true, 'no reset while earlier preferences wait to be migrated');
+    await pending.close();
     const partial = await browser.newPage({ viewport: { width: 380, height: 600 } });
     await partial.addInitScript(() => {
       window.chrome = { runtime: {}, tabs: {

@@ -138,7 +138,8 @@
       migrated = isMigrated;
       baseline = sanitize(value);
       // The caller gets its own copy; edits to it must not move the baseline.
-      callback(sanitize(value));
+      // The second argument tells whether earlier preferences are fully migrated.
+      callback(sanitize(value), isMigrated);
     };
     if (!local) { done({}, false); return; }
     local.get([...KEYS, VERSION_KEY], (stored) => {

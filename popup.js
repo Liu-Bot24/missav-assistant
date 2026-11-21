@@ -421,9 +421,13 @@
     sessionStorageApi?.set({ [UNDO_KEY]: { settings: previous, expiresAt } });
   });
 
-  SettingsStore.load((storedSettings) => {
+  SettingsStore.load((storedSettings, isMigrated) => {
     settings = storedSettings;
     render();
+    // Until earlier preferences are migrated, a reset could not replace the
+    // ones still waiting in the old storage, so it is not offered.
+    elements.resetButton.disabled = !isMigrated;
+    elements.resetButton.title = isMigrated ? "" : "旧版设置尚未迁移完成，重新打开弹窗后可恢复默认";
     // Controls stay inactive until the stored settings are known.
     for (const element of document.querySelectorAll("main, footer")) element.inert = false;
     readSyncCopy();
