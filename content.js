@@ -1103,9 +1103,10 @@
 
     if (targetSize === 0 || visibleCount >= targetSize) return;
 
+    // The open page's links resolve against its <base>, which may differ from its address.
     const seenCardKeys = new Set(
       getGridItems(grid)
-        .map(({ card }) => getCardKey(card, basePageUrl))
+        .map(({ card }) => getCardKey(card, document.baseURI))
         .filter(Boolean)
     );
     const visitedPages = new Set();

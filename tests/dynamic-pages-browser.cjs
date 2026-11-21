@@ -236,6 +236,16 @@ const only = process.argv[2];
       await ownBase.close();
       console.log("PASS the open page's next link follows its own base");
 
+      // Under that base a relative card link names /cn/archive/…, so the next page's copy is a duplicate.
+      const relCard = '<div data-id="sample-021"><div class="thumbnail"><a href="sample-021">Relative</a><span class="bottom-1 left-1">ordinary</span></div></div>';
+      const dupNext = markup(`<div data-id="dup-021"><div class="thumbnail"><a href="${origin}/cn/archive/sample-021">Again</a><span class="bottom-1 left-1">ordinary</span></div></div>${card('sample-022')}`);
+      const dedupe = await fixture({ html: markup(card('sample-001', 'uncensored') + relCard, 'page2')
+        .replace('<meta charset="utf-8">', '<meta charset="utf-8"><base href="/cn/archive/">'), responseHtml: dupNext });
+      await dedupe.waitForSelector('[data-id="sample-022"]', { timeout: 5000 });
+      assert.equal(await dedupe.locator('[data-id="dup-021"]').count(), 0, 'a card already on the page is not added again');
+      await dedupe.close();
+      console.log("PASS cards on the open page are recognized through its base");
+
       // The page's CSS hides this badge; only the inserted card can show that.
       const styled = markup(`<div data-id="sample-005"><div class="thumbnail"><a href="/cn/sample-005">Styled</a><span class="bottom-1 left-1 gone">ordinary</span></div></div>${card('sample-006')}`)
         .replace('<style>', '<style>.gone{display:none}');
