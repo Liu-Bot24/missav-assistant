@@ -939,7 +939,11 @@
     clearCardFilterState(importedCard);
     grid.append(importedItem);
     topologyRevision += 1;
+    // The source page was parsed without styles; now the page's own CSS can
+    // hide a badge, so judge the labels again before counting the card.
+    const visible = applyVisibleLabelStage([{ item: findLayoutItem(importedCard), card: importedCard }], true).length > 0;
     applyCardMetadata(importedCard, getCardItemId(importedCard, baseUrl));
+    return visible;
   }
 
   function resolveImportedUrl(value, baseUrl, requiredOrigin = null) {
@@ -1107,9 +1111,8 @@
           if (visibleCount >= targetSize) return;
           const cardKey = getCardKey(card, page.baseUrl);
           if (cardKey && seenCardKeys.has(cardKey)) return;
-          appendImportedItem(grid, item, page.baseUrl);
           if (cardKey) seenCardKeys.add(cardKey);
-          visibleCount += 1;
+          if (appendImportedItem(grid, item, page.baseUrl)) visibleCount += 1;
         }
       );
       if (result.cancelled) return;
@@ -1209,9 +1212,8 @@
           ({ item, card }) => {
             const cardKey = getCardKey(card, page.baseUrl);
             if (cardKey && infiniteSeenCardKeys.has(cardKey)) return;
-            appendImportedItem(infiniteGrid, item, page.baseUrl);
             if (cardKey) infiniteSeenCardKeys.add(cardKey);
-            appendedCount += 1;
+            if (appendImportedItem(infiniteGrid, item, page.baseUrl)) appendedCount += 1;
           }
         );
         if (result.cancelled) return;
@@ -1400,16 +1402,20 @@
       if (!target) return false;
       // A reused card keeps its node and only swaps the link.
       if (mutation.attributeName === "href") return Boolean(target.closest?.("div.thumbnail"));
+      let wasBadge = false;
       if (mutation.attributeName === "class") {
         const siteClasses = (value) => String(value ?? "").split(/\s+/)
           .filter((name) => name && !OWN_CLASSES.has(name)).sort().join(" ");
         if (siteClasses(mutation.oldValue) === siteClasses(target.getAttribute("class"))) return false;
+        // A span that just lost its badge classes still changes the labels.
+        const old = new Set(String(mutation.oldValue ?? "").split(/\s+/));
+        wasBadge = target.matches?.("span") && (old.has("badge") || (old.has("bottom-1") && old.has("left-1")));
       }
       const possibleBadges = [
         ...(target.matches?.("span") ? [target] : []),
         ...(target.querySelectorAll?.("span") ?? [])
       ];
-      return possibleBadges.some(isBadge) && (
+      return (wasBadge || possibleBadges.some(isBadge)) && (
         Boolean(target.closest?.("div.thumbnail")) ||
         mutationTargetBelongsToVideoItem(target)
       );
@@ -1446,12 +1452,19 @@
 
       if (!closestCard && mutationTargetBelongsToVideoItem(target)) {
         const grid = target.closest("div.grid");
-        let item = target;
-        while (item.parentElement && item.parentElement !== grid) {
-          item = item.parentElement;
+        // A grid holding a single card is that card's layout item, so a badge
+        // in any of its branches belongs to the card.
+        if (grid.children.length > 1 && getGridCardCount(grid) === 1) {
+          const card = grid.querySelector("div.thumbnail");
+          if (card) cards.add(card);
+        } else {
+          let item = target;
+          while (item.parentElement && item.parentElement !== grid) {
+            item = item.parentElement;
+          }
+          const card = item.parentElement === grid ? getCardFromGridItem(item) : null;
+          if (card) cards.add(card);
         }
-        const card = item.parentElement === grid ? getCardFromGridItem(item) : null;
-        if (card) cards.add(card);
       }
 
       if (mutation.type === "attributes" && !closestCard) addCardsFromNode(target);

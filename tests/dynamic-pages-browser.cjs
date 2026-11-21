@@ -14,7 +14,7 @@ const only = process.argv[2];
 (async () => {
   const browser = await launch();
   const errors = [];
-  async function fixture({ html = markup(card('sample-001') + card('sample-002')), mode = 'ready', responseHtml = nextHtml } = {}) {
+  async function fixture({ html = markup(card('sample-001') + card('sample-002')), mode = 'ready', responseHtml = nextHtml, settings = {} } = {}) {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => {
@@ -24,10 +24,10 @@ const only = process.argv[2];
     });
     await page.goto(`${origin}/cn/new`);
     await page.addStyleTag({ path: path.join(root, 'content.css') });
-    await page.evaluate(({ mode, responseHtml }) => {
+    await page.evaluate(({ mode, responseHtml, settings }) => {
       window.fixtureSettings = { settingsVersion: 2, enabled: true, homepageEnabled: true, infiniteScroll: false,
         hiddenLabels: ['uncensored'], categoryIncludeRules: [], categoryExcludeRules: [],
-        actressLimitEnabled: false, showActressNames: false };
+        actressLimitEnabled: false, showActressNames: false, ...settings };
       window.fixtureMetrics = { callbacks: 0, fetches: 0 };
       const Observer = window.MutationObserver;
       window.MutationObserver = class extends Observer {
@@ -58,7 +58,7 @@ const only = process.argv[2];
         if (fetchMode === 'body') return { ok: true, url: _url, text: () => new Promise(resolve => { window.releaseFetch = () => resolve(responseHtml); }) };
         return response;
       };
-    }, { mode, responseHtml });
+    }, { mode, responseHtml, settings });
     for (const script of ['text.js', 'site-library.js', 'label-library.js', 'category-library.js', 'settings.js', 'metadata-client.js', 'content.js']) {
       await page.addScriptTag({ path: path.join(root, script) });
     }
@@ -91,8 +91,22 @@ const only = process.argv[2];
       const callbacks = await page.evaluate(() => fixtureMetrics.callbacks);
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => fixtureMetrics.callbacks), callbacks, 'own class writes settle without a feedback loop');
+      // The span stops being a badge, so its label no longer counts.
+      await page.locator('[data-id="sample-001"] span').evaluate(el => el.classList.remove('bottom-1', 'left-1'));
+      await page.waitForFunction(() => !document.querySelector('[data-id="sample-001"]').classList.contains('viewing-assistant-hidden'), null, { timeout: 500 });
       await page.close();
-      console.log('PASS reused cards are re-checked on link, class and hidden changes');
+      console.log('PASS reused cards are re-checked on link, class, hidden and lost-badge changes');
+
+      // One card whose badge sits in a sibling column of the same grid.
+      const solo = await fixture({ html: markup(card('sample-001') + card('sample-002')) +
+        '<div class="grid" id="solo"><div><div class="thumbnail"><a href="/cn/solo-001">Solo</a></div></div><div class="details"><span class="badge" hidden>uncensored</span></div></div>' });
+      const gridHidden = () => solo.locator('#solo').evaluate(el => el.classList.contains('viewing-assistant-hidden'));
+      await solo.waitForTimeout(1000); // Past the delayed load scan.
+      assert.equal(await gridHidden(), false);
+      await solo.locator('.details span').evaluate(el => { el.hidden = false; });
+      await solo.waitForFunction(() => document.querySelector('#solo').classList.contains('viewing-assistant-hidden'), null, { timeout: 500 });
+      await solo.close();
+      console.log('PASS a badge in a sibling column of a single-card grid is re-checked');
     }
     if (!only || only === 'stall') {
       for (const mode of ['connection', 'body']) {
@@ -150,6 +164,19 @@ const only = process.argv[2];
       assert.equal(await based.locator('.away').getAttribute('href'), null, 'a link resolved off the site is dropped');
       await based.close();
       console.log('PASS imported covers follow a base on another host');
+
+      // The page's CSS hides this badge; only the inserted card can show that.
+      const styled = markup(`<div data-id="sample-005"><div class="thumbnail"><a href="/cn/sample-005">Styled</a><span class="bottom-1 left-1 gone">ordinary</span></div></div>${card('sample-006')}`)
+        .replace('<style>', '<style>.gone{display:none}');
+      const untagged = await fixture({
+        html: markup(card('sample-001', 'uncensored') + card('sample-002'), '/cn/archive/page2').replace('<style>', '<style>.gone{display:none}'),
+        responseHtml: styled, settings: { hideUntagged: true }
+      });
+      await untagged.waitForSelector('[data-id="sample-006"]', { timeout: 5000 });
+      assert.equal(await isHidden(untagged, 'sample-005'), true, 'a badge hidden by the page leaves the card untagged');
+      assert.equal(await isHidden(untagged, 'sample-006'), false, 'the next card fills the place');
+      await untagged.close();
+      console.log('PASS imported cards are judged with the page styles once inserted');
     }
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
