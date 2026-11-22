@@ -35,7 +35,7 @@ test('空数据计零人，同一个名字重复出现只计一次', () => {
   assert.equal(library.resolve(null).count, 0);
   assert.equal(library.resolve([]).count, 0);
   assert.equal(library.resolve(['', '  ', 7]).count, 0);
-  assert.equal(library.resolve(['未收录甲', ' 未收录甲 ', '未收录甲']).count, 1);
+  assert.equal(library.resolve(['未收录甲', ' 未收录甲 ', '未收录甲', '未收录甲']).count, 1);
   assert.equal(library.resolve(['ＭＩＲＵ', 'miru', '坂道みる']).count, 1);
 });
 
@@ -73,4 +73,23 @@ test('“主名（别名、别名）”写法是一个人，括号里的名字�
   assert.equal(resolve(['未知（演员甲、未收录）', '演员甲']).count, 1);
   assert.equal(resolve(['未知（演员甲、演员乙）', '演员甲']).count, 2);
   assert.equal(resolve(['完全未知（也未收录）']).count, 1);
+});
+
+test('名录里没有的名字只在写法相同时合并，不忽略大小写和空格', () => {
+  assert.equal(library.resolve(['Lina', 'Li Na', '松本いちか', '深田えいみ']).count, 4);
+  assert.equal(library.resolve(['Lina', 'lina']).count, 2);
+  assert.equal(library.resolve(['Ｌｉｎａ', 'Lina']).count, 1, '只有全角半角之差的是同一写法');
+});
+
+test('来源标为易误认或同名异人的写法不认作任何人', () => {
+  assert.ok(context.ActressData.cautionAliases.includes('RENA'));
+  assert.equal(library.resolve(['RENA', '衣吹かのん']).count, 2);
+  assert.equal(library.resolve(['Rena', '衣吹かのん']).count, 1, '未标注的写法仍认得出');
+  const resolve = library.createResolver({ cautionAliases: ['ABC'], records: [
+    { id: 'person-a', name: '甲', aliases: ['演员甲', 'Abc'] }
+  ] });
+  assert.equal(resolve(['ABC', '演员甲']).count, 2);
+  assert.equal(resolve(['abc', '演员甲']).count, 1);
+  assert.equal(resolve(['未知（ABC）', '演员甲']).count, 2);
+  assert.equal(resolve(['未知（ABC、演员甲）', '演员甲']).count, 1);
 });
