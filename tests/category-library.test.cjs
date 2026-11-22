@@ -123,3 +123,14 @@ test("见过的分类按出现次数排在前面，其余已知分类按名称�
   const values = library.options(["中出し", "素人"]).filter((option) => option.kind === "value").map((option) => option.rule);
   assert.deepEqual(Array.from(values.slice(0, 2)), [library.valueRule("中出し"), library.valueRule("素人")]);
 });
+
+test("搜索可以覆盖全部内置分类，未输入时的列表保持精简", () => {
+  const library = loadLibrary();
+  const rule = library.valueRule("エステ");
+  assert.equal(library.options().some((option) => option.rule === rule), false);
+  const all = library.options([], { allKnown: true });
+  const option = all.find((item) => item.rule === rule);
+  assert.equal(option?.label, "美容按摩");
+  assert.equal(all.filter((item) => item.rule === rule).length, 1);
+  assert.equal(all.some((item) => item.rule === library.valueRule("4時間以上作品")), false);
+});

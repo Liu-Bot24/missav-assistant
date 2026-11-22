@@ -52,6 +52,11 @@ const root = path.join(__dirname, '..');
     assert.equal(await page.locator('#categoryIncludeField .selected-category-chip').count(), 1);
     await page.locator('#categoryIncludeField .selected-category-chip button').click();
     assert.equal(await page.locator('#categoryIncludeField .selected-category-chip').count(), 0);
+    // With nothing looked up yet, a search still finds every bundled category.
+    await page.locator('#categoryExcludeSearch').fill('美容按摩');
+    assert.ok((await page.locator('#categoryExcludeSuggestions [role="option"]').allTextContents()).some(text => text.includes('美容按摩')));
+    await page.locator('#categoryExcludeSearch').fill('');
+    assert.equal(await page.locator('#actressExplainer').textContent(), '视频列出的每个名字算一人。');
     await page.locator('#resetButton').click();
     assert.deepEqual(await page.evaluate(() => window.saved.hiddenLabels), ['uncensored']);
     assert.equal(await page.locator('#resetButton').textContent(), '撤销');

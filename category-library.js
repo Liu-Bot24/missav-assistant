@@ -335,11 +335,11 @@
 
   // Categories seen on videos come first, most used first, as listed;
   // the remaining known categories follow by name.
-  function options(discoveredTypes = []) {
+  function options(discoveredTypes = [], { allKnown = false } = {}) {
     const seen = new Set();
     const rank = new Map();
     const labelOf = (value) => typeOf(value)?.label ?? value;
-    const values = [...discoveredTypes, ...seedTypes]
+    const values = [...discoveredTypes, ...seedTypes, ...(allKnown ? localizedTypes.map((type) => type.aliases[0]) : [])]
       .map((value) => String(canonicalValue(value)).trim())
       .filter((value) => {
         const key = conceptKey(value);

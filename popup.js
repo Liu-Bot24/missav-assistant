@@ -60,10 +60,9 @@
   let builtFor = null;
   function categoryOptions() {
     if (builtFor === discoveredCategories) return builtOptions;
-    const all = CategoryLibrary.options(discoveredCategories);
-    const offered = discoveredCategories.length > MAX_OFFERED_CATEGORIES
-      ? CategoryLibrary.options(discoveredCategories.slice(0, MAX_OFFERED_CATEGORIES))
-      : all;
+    // A search covers every known category; the list shown before typing stays short.
+    const all = CategoryLibrary.options(discoveredCategories, { allKnown: true });
+    const offered = CategoryLibrary.options(discoveredCategories.slice(0, MAX_OFFERED_CATEGORIES));
     builtFor = discoveredCategories;
     builtOptions = { all, offered };
     return builtOptions;
@@ -259,7 +258,7 @@
       : "按视频详情页上的分类筛选，隐藏条件优先。";
     elements.actressExplainer.textContent = basicOnly
       ? "这个网站没有女优数据，以下设置只在 MissAV 上生效。"
-      : "同一演员的不同名字合并计数。";
+      : "视频列出的每个名字算一人。";
     if (basicOnly) elements.ruleSummary.textContent = `已保存 ${settings.hiddenLabels.length +
       settings.categoryIncludeRules.length + settings.categoryExcludeRules.length + (settings.hideUntagged ? 1 : 0) +
       (settings.actressLimitEnabled ? 1 : 0)} 条规则`;
