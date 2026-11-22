@@ -382,12 +382,12 @@ test("内容页先读到痕迹、升级事件随后给出版本时，以事件�
   assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
 });
 
-test("记下旧版本失败一次时，本次仍按痕迹补写默认", async () => {
+test("记下旧版本失败一次时，随迁移一起记下，默认照常生效", async () => {
   let sets = 0;
   const harness = createSettings({ failures: { "local.set": () => ++sets === 1 },
     local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } } });
   await new Promise((resolve) => harness.settings.handleInstalled({ reason: "chrome_update" }, resolve));
-  assert.equal(harness.local.actressLimitEnabled, true);
+  assert.equal(harness.local.earlierVersionTraced, "1.0.1");
   delete harness.local.videoMetadataById;
   assert.equal((await load(harness)).showActressNames, true);
 });
@@ -447,4 +447,33 @@ test("只有推断标记时直接用本机设置，不再读取旧缓存和同�
   assert.equal(values.actressLimitEnabled, true);
   assert.equal(values.showActressNames, false);
   assert.deepEqual(harness.calls, ["local.get"]);
+});
+
+test("弹窗首次读本机设置失败一次时重读，不把已有规则当成空", async () => {
+  let gets = 0;
+  const harness = createSettings({ local: { settingsVersion: 2, categoryIncludeRules: ["value:sample-rule"] },
+    failures: { "local.get": () => ++gets === 1 } });
+  const [values, isMigrated] = await new Promise((resolve) => harness.settings.load((...result) => resolve(result)));
+  assert.equal(isMigrated, true);
+  assert.deepEqual([...values.categoryIncludeRules], ["value:sample-rule"]);
+});
+
+test("推断标记写失败一次时随迁移一起写入，随后到来的事件版本仍然生效", async () => {
+  let sets = 0;
+  const harness = createSettings({ failures: { "local.set": () => ++sets === 1 },
+    local: { videoMetadataById: { "abc-001": { genres: [], tags: [], type: "jav", duration: 60, cachedAt: 1 } } } });
+  assert.equal((await load(harness)).actressLimitEnabled, false);
+  assert.equal(Object.hasOwn(harness.local, "actressLimitEnabled"), false);
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.1" }, resolve));
+  assert.equal((await load(harness)).actressLimitEnabled, true);
+});
+
+test("升级时补写旧默认读或写失败一次，当次就重试落盘", async () => {
+  for (const [operation, failing] of [["local.get", 2], ["local.set", 2]]) {
+    let calls = 0;
+    const harness = createSettings({ local: { settingsVersion: 2 }, failures: { [operation]: () => ++calls === failing } });
+    await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.1" }, resolve));
+    assert.equal(harness.local.actressLimitEnabled, true, operation);
+    assert.equal(Object.hasOwn(harness.local, "earlierDefaultsPending"), false, operation);
+  }
 });

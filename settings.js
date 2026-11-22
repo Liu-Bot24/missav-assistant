@@ -57,6 +57,11 @@
 
   const api = () => globalThis.chrome?.storage;
   const lastError = () => globalThis.chrome?.runtime?.lastError ?? null;
+  // Runs a storage call once more if it failed; the second outcome stands.
+  const twice = (call) => (argument, callback) => call(argument, (value) => {
+    if (lastError()) call(argument, callback);
+    else callback(value);
+  });
 
   function sanitize(value) {
     const sanitizeCategoryRules = (rules, fallback) => Array.isArray(rules)
@@ -122,13 +127,13 @@
   // other devices, so that is the user's decision. The callback receives
   // whether the preferences are now under the current version.
   // The version seen in the traces is marked first: the background clears them,
-  // and migration may have to be retried after that. The callback also receives
-  // it, in case writing that mark failed.
+  // and migration may have to be retried after that. It is written again with
+  // the settings version, in case marking failed.
   function migrate(callback = () => {}) {
     const storage = api();
     if (!storage?.local) { callback(false); return; }
     let traced = null;
-    const done = (ok) => callback(ok, traced);
+    const done = (ok) => callback(ok);
     storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY, ...EARLIER_VERSION_MARKS, EARLIER_CACHE, EARLIER_CATEGORIES])], (local) => {
       if (lastError()) { done(false); return; }
       if (local?.[VERSION_KEY] === VERSION) { done(true); return; }
@@ -141,7 +146,8 @@
         storage.local.get([...KEYS, VERSION_KEY], (current) => {
           if (lastError()) { done(false); return; }
           if (current?.[VERSION_KEY] === VERSION) { done(true); return; }
-          storage.local.set({ ...pickSettings(merged), ...pickSettings(current), [VERSION_KEY]: VERSION }, () => {
+          const mark = traced ? { [EARLIER_VERSION_TRACED]: traced } : {};
+          storage.local.set({ ...pickSettings(merged), ...pickSettings(current), ...mark, [VERSION_KEY]: VERSION }, () => {
             if (lastError()) { done(false); return; }
             if (obsolete.length === 0) { done(true); return; }
             storage.local.remove(obsolete, () => done(true));
@@ -188,29 +194,29 @@
   // One failed call must not leave rules unread: the popup would show empty
   // lists, and adding to one would replace the rules not yet copied.
   function migrateWithRetry(callback) {
-    migrate((ok, traced) => {
-      if (ok) { callback(ok, traced); return; }
-      migrate((retried, tracedAgain) => callback(retried, tracedAgain ?? traced));
+    migrate((ok) => {
+      if (ok) callback(ok);
+      else migrate(callback);
     });
   }
 
-  // Migrates, then writes the earlier defaults of a version an event gave (or
-  // of a guess that could not be marked) for preferences never stored, and only
-  // then clears the marks; stored values, including false and empty lists, stay.
+  // Migrates, then writes the earlier defaults of a version an event gave for
+  // preferences never stored, and only then clears the marks; stored values,
+  // including false and empty lists, stay.
   // On any failure the mark stays and a later load retries.
   // `updatedFrom` is given while the update itself runs, in case writing the mark failed.
   function completeEarlierDefaults(callback = () => {}, updatedFrom = null) {
-    migrateWithRetry((ok, traced) => {
+    migrateWithRetry((ok) => {
       const local = api()?.local;
       if (!ok || !local) { callback(ok); return; }
-      local.get([...EARLIER_DEFAULT_KEYS, ...EARLIER_VERSION_MARKS], (stored) => {
+      const [read, write] = [twice(local.get.bind(local)), twice(local.set.bind(local))];
+      read([...EARLIER_DEFAULT_KEYS, ...EARLIER_VERSION_MARKS], (stored) => {
         if (lastError()) { callback(true); return; }
-        const version = updatedFrom ?? stored?.[EARLIER_DEFAULTS_PENDING] ??
-          (stored?.[EARLIER_VERSION_TRACED] ? null : traced);
+        const version = updatedFrom ?? stored?.[EARLIER_DEFAULTS_PENDING];
         if (!version) { callback(true); return; }
         const missing = Object.fromEntries(Object.entries(earlierDefaults(version))
           .filter(([key]) => !Object.hasOwn(stored, key)));
-        local.set(missing, () => {
+        write(missing, () => {
           if (lastError()) { callback(true); return; }
           local.remove([...EARLIER_VERSION_MARKS], () => callback(true));
         });
@@ -246,7 +252,7 @@
       return version ? withEarlierDefaults(version, value) : value;
     };
     const keys = [...KEYS, ...LEGACY_KEYS, VERSION_KEY, ...EARLIER_VERSION_MARKS];
-    local.get(keys, (stored) => {
+    twice(local.get.bind(local))(keys, (stored) => {
       if (lastError()) { done({}, false); return; }
       if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(merge(stored, true), true); return; }
       completeEarlierDefaults((ok) => {
