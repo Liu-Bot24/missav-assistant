@@ -113,8 +113,8 @@
             (mutation.attributeName === "href" && mutation.target?.matches?.("a[href]"))
           )) ||
           [...mutation.addedNodes].some((node) => node.nodeType === 1 && (
-            node.matches?.("div.thumbnail, div.grid, a[href]") ||
-            node.querySelector?.("div.thumbnail, div.grid, a[href]")
+            node.matches?.("div.thumbnail, div.grid, a[href], button") ||
+            node.querySelector?.("div.thumbnail, div.grid, a[href], button")
           ))
         );
         if (relevant) schedule();
