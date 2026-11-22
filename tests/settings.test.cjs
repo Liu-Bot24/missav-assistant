@@ -286,12 +286,23 @@ test("写升级标记失败时，升级当次仍补写旧默认", async () => {
   assert.equal((await load(harness)).showActressNames, true);
 });
 
-test("补写旧默认后的回读失败时，沿用已经读到的设置", async () => {
+test("补写旧默认后的回读两次都失败时，沿用已经读到的设置", async () => {
   let gets = 0;
   const harness = createSettings({ local: { settingsVersion: 2, earlierDefaultsPending: true, enabled: false },
-    failures: { "local.get": () => ++gets === 4 } });
+    failures: { "local.get": () => [4, 5].includes(++gets) } });
   const values = await load(harness);
-  assert.equal(gets, 4, "第四次读取是回读");
+  assert.equal(gets, 5, "第四、五次读取是回读");
   assert.equal(values.enabled, false);
   assert.equal(values.actressLimitEnabled, true);
+});
+
+test("迁移后的回读失败时重读；两次都失败也不丢已迁入的规则", async () => {
+  for (const failing of [[4], [4, 5]]) {
+    let gets = 0;
+    const harness = createSettings({ local: { genreIncludeRules: ["value:sample-rule"] },
+      failures: { "local.get": () => failing.includes(++gets) } });
+    const values = await load(harness);
+    assert.deepEqual([...values.categoryIncludeRules], ["value:sample-rule"], JSON.stringify(failing));
+    assert.equal(gets, 5, JSON.stringify(failing));
+  }
 });

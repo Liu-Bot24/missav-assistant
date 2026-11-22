@@ -194,22 +194,27 @@
       callback(sanitize(value), isMigrated);
     };
     if (!local) { done({}, false); return; }
-    local.get([...KEYS, VERSION_KEY, EARLIER_DEFAULTS_PENDING], (stored) => {
+    // Earlier local values still count until migration completes; while the
+    // update's defaults are not written yet, they stand in for missing ones.
+    const merge = (values, isMigrated) => {
+      const value = isMigrated ? pickSettings(values) : upgradeValues({ ...pickLegacy(values), ...pickSettings(values) });
+      return values?.[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(value) : value;
+    };
+    const keys = [...KEYS, ...LEGACY_KEYS, VERSION_KEY, EARLIER_DEFAULTS_PENDING];
+    local.get(keys, (stored) => {
       if (lastError()) { done({}, false); return; }
       if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(stored, true); return; }
       const prepare = stored?.[EARLIER_DEFAULTS_PENDING] ? completeEarlierDefaults : migrate;
-      prepare((ok) => local.get([...KEYS, ...LEGACY_KEYS, EARLIER_DEFAULTS_PENDING], (current) => {
-        // If this read fails, the values already read still stand.
-        if (lastError()) {
-          const known = pickSettings(stored);
-          done(stored[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(known) : known, false);
-          return;
-        }
-        // Without a completed migration, earlier local values still count; while
-        // the update's defaults are not written yet, they stand in for missing ones.
-        const value = ok ? pickSettings(current) : upgradeValues({ ...pickLegacy(current), ...pickSettings(current) });
-        done(current?.[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(value) : value, ok);
-      }));
+      prepare((ok) => {
+        // The read after migration is tried twice; if both fail, the values read
+        // before it stand, reported as not migrated.
+        const reread = (attemptsLeft) => local.get(keys, (current) => {
+          if (!lastError()) { done(merge(current, ok), ok); return; }
+          if (attemptsLeft > 0) { reread(attemptsLeft - 1); return; }
+          done(merge(stored, false), false);
+        });
+        reread(1);
+      });
     });
   }
 
