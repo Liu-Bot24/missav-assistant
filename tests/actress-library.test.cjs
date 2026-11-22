@@ -10,47 +10,59 @@ for (const file of ['text.js', 'actress-data.js', 'actress-library.js']) {
 }
 const library = context.ActressLibrary;
 
-test('名录确认为同一人的多个名字只计一人', () => {
-  const result = library.resolve(['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬']);
-  assert.equal(result.count, 1);
-  assert.equal(result.names.length, 1);
-  assert.equal(result.names[0], '田中柠檬');
+test('列出的每个名字算一人，名录认得出的名字显示名录里的中文名', () => {
+  const result = library.resolve(['田中レモン', '松本いちか', '深田えいみ']);
+  assert.equal(result.count, 3);
+  assert.deepEqual([...result.names], ['田中柠檬', '松本一香', library.resolve(['深田えいみ']).names[0]]);
 });
 
-test('四位不同演员计四人，同一演员的多个名字不增加人数', () => {
-  const result = library.resolve(['松本いちか', '松本一香', '深田えいみ', '天海こころ', '楓カレン', '田中レモン', 'MIRU', '坂道みる']);
-  assert.equal(result.count, 4);
-  assert.equal(result.names.length, 4);
+test('名录认为是同一人的不同名字也各算一人，显示只列一次', () => {
+  const result = library.resolve(['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬']);
+  assert.equal(result.count, 5);
+  assert.deepEqual([...result.names], ['田中柠檬']);
+  assert.equal(library.resolve(['管野しずか', '神納花']).count, 2);
 });
 
 test('名录里没有的名字也各算一人，并按原样显示', () => {
   const result = library.resolve(['未收录甲', '未收录乙', '未收录丙', '未收录丁']);
   assert.equal(result.count, 4);
   assert.deepEqual([...result.names], ['未收录甲', '未收录乙', '未收录丙', '未收录丁']);
-  assert.equal(library.resolve(['松本いちか', '未收录甲']).count, 2);
-  assert.equal(library.resolve(['松本いちか別人']).count, 1, '不用子串猜身份，但它仍是一个人');
 });
 
-test('空数据计零人，同一个名字重复出现只计一次', () => {
+test('空数据计零人；同一写法重复列出只算一次，大小写和空格不同就是不同的名字', () => {
   assert.equal(library.resolve(null).count, 0);
   assert.equal(library.resolve([]).count, 0);
   assert.equal(library.resolve(['', '  ', 7]).count, 0);
-  assert.equal(library.resolve(['未收录甲', ' 未收录甲 ', '未收录甲', '未收录甲']).count, 1);
-  assert.equal(library.resolve(['ＭＩＲＵ', 'miru', '坂道みる']).count, 1);
+  assert.equal(library.resolve(['未收录甲', ' 未收录甲 ', '未收录甲']).count, 1);
+  assert.equal(library.resolve(['Ｌｉｎａ', 'Lina']).count, 1, '只有全角半角之差的是同一写法');
+  assert.deepEqual([...library.resolve(['Ｌｉｎａ', 'Lina']).names], ['Ｌｉｎａ'], '显示第一次出现的原写法');
+  assert.equal(library.resolve(['Lina', 'Li Na', 'lina']).count, 3);
 });
 
-test('同名异人和身份不明的名字各算一人，不并到别人身上', () => {
+test('“主名（别名、别名）”是一个名字，算一人；括号里的名字用来认出显示名', () => {
+  const result = library.resolve(['水咲ローラ（滝澤ローラ）', 'ミュウ（夏目ミュウ、春川リサ、夏目衣織）']);
+  assert.equal(result.count, 2);
   const resolve = library.createResolver({ records: [
     { id: 'person-a', name: '甲', aliases: ['演员甲', '同名'] },
-    { id: 'person-b', name: '乙', aliases: ['演员乙', '同名'] },
-    { id: 'person-a', name: '甲的旧中文名', aliases: ['旧名甲'] },
-    { id: null, name: '丙', aliases: ['无身份名', '无身份旧名'] }
+    { id: 'person-b', name: '乙', aliases: ['演员乙', '同名'] }
   ] });
-  assert.equal(resolve(['同名', '无身份名']).count, 2);
-  assert.equal(resolve(['演员甲', '旧名甲']).count, 1);
-  assert.equal(resolve(['旧名甲']).names[0], '甲');
-  assert.equal(resolve(['演员甲', '演员乙', '同名']).count, 3);
-  assert.equal(resolve(['无身份名', '无身份旧名']).count, 1);
+  assert.deepEqual([...resolve(['未知（演员甲、未收录）']).names], ['甲']);
+  assert.deepEqual([...resolve(['未知（演员甲、演员乙）']).names], ['未知（演员甲、演员乙）']);
+  assert.deepEqual([...resolve(['同名']).names], ['同名'], '同名异人不显示成其中任何一人');
+});
+
+test('来源标为易误认或同名异人的写法不显示成任何人', () => {
+  const caution = context.ActressData.cautionAliases;
+  assert.ok(caution.includes('RENA') && caution.includes('平原みなみ') && caution.includes('CHIYU'));
+  assert.equal(caution.includes('尾上涼子'), false);
+  assert.deepEqual([...library.resolve(['RENA']).names], ['RENA']);
+  assert.deepEqual([...library.resolve(['Rena']).names], [library.resolve(['衣吹かのん']).names[0]], '未标注的写法仍认得出');
+  assert.deepEqual([...library.resolve(['Chiyu']).names], ['Chiyu']);
+  const resolve = library.createResolver({ cautionAliases: ['ABC'], records: [
+    { id: 'person-a', name: '甲', aliases: ['演员甲', 'Abc', 'XYZ'] }
+  ] });
+  assert.deepEqual([...resolve(['ABC']).names], ['ABC']);
+  assert.deepEqual([...resolve(['abc']).names], ['甲']);
 });
 
 test('姓名数据来自固定版本的 Amane，保留可核验的原始来源', () => {
@@ -59,51 +71,4 @@ test('姓名数据来自固定版本的 Amane，保留可核验的原始来源',
   assert.equal(source.repository, 'https://github.com/sqzw-x/amane');
   assert.equal(context.ActressData.commit, source.commit);
   assert.equal(context.ActressData.sha256, crypto.createHash('sha256').update(xml).digest('hex'));
-});
-
-test('“主名（别名、别名）”写法是一个人，括号里的名字用来认出是谁', () => {
-  const result = library.resolve(['水咲ローラ（滝澤ローラ）', 'ミュウ（夏目ミュウ、春川リサ、夏目衣織）']);
-  assert.equal(result.count, 2);
-  const resolve = library.createResolver({ records: [
-    { id: 'person-a', name: '甲', aliases: ['演员甲', '同名'] },
-    { id: 'person-b', name: '乙', aliases: ['演员乙', '同名'] }
-  ] });
-  assert.equal(resolve(['未知（演员甲、演员乙）']).count, 1);
-  assert.equal(resolve(['未知（同名）']).count, 1);
-  assert.equal(resolve(['未知（演员甲、未收录）', '演员甲']).count, 1);
-  assert.equal(resolve(['未知（演员甲、演员乙）', '演员甲']).count, 2);
-  assert.equal(resolve(['完全未知（也未收录）']).count, 1);
-});
-
-test('名录里没有的名字只在写法相同时合并，不忽略大小写和空格', () => {
-  assert.equal(library.resolve(['Lina', 'Li Na', '松本いちか', '深田えいみ']).count, 4);
-  assert.equal(library.resolve(['Lina', 'lina']).count, 2);
-  assert.equal(library.resolve(['Ｌｉｎａ', 'Lina']).count, 1, '只有全角半角之差的是同一写法');
-  assert.deepEqual([...library.resolve(['Ｌｉｎａ', 'Lina']).names], ['Ｌｉｎａ'], '显示第一次出现的原写法');
-});
-
-test('来源标为易误认或同名异人的写法不认作任何人', () => {
-  assert.ok(context.ActressData.cautionAliases.includes('RENA'));
-  assert.equal(library.resolve(['RENA', '衣吹かのん']).count, 2);
-  assert.equal(library.resolve(['Rena', '衣吹かのん']).count, 1, '未标注的写法仍认得出');
-  const resolve = library.createResolver({ cautionAliases: ['ABC'], records: [
-    { id: 'person-a', name: '甲', aliases: ['演员甲', 'Abc'] }
-  ] });
-  assert.equal(resolve(['ABC', '演员甲']).count, 2);
-  assert.equal(resolve(['abc', '演员甲']).count, 1);
-  assert.equal(resolve(['未知（ABC）', '演员甲']).count, 2);
-  assert.equal(resolve(['未知（ABC、演员甲）', '演员甲']).count, 1);
-});
-
-test('单独一项的警告标记作用于该记录自己的名字；警告写法不能成为认人的依据', () => {
-  const caution = context.ActressData.cautionAliases;
-  assert.ok(caution.includes('平原みなみ') && caution.includes('あいか') && caution.includes('CHIYU'));
-  assert.equal(caution.includes('尾上涼子'), false);
-  assert.equal(library.resolve(['尾上涼子', '平原みなみ']).count, 2);
-  assert.equal(library.resolve(['CHIYU', 'Chiyu', 'chiyu']).count, 3);
-  assert.deepEqual([...library.resolve(['Chiyu']).names], ['Chiyu']);
-  const resolve = library.createResolver({ cautionAliases: ['ABC'], records: [
-    { id: 'person-a', name: '甲', aliases: ['演员甲', 'ABC'] }
-  ] });
-  assert.equal(resolve(['abc', '演员甲']).count, 2, '只靠警告写法的宽松匹配不认人');
 });

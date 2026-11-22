@@ -6,8 +6,8 @@ const root = path.join(__dirname, '..');
 const out = path.join(root, 'output', 'actress-browser');
 fs.mkdirSync(out, { recursive: true });
 const fixtureNames = {
-  'single-001': ['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬'],
-  'three-001': ['松本いちか', '松本一香', '深田えいみ', '天海こころ', 'MIRU', '坂道みる'],
+  'single-001': ['田中レモン'],
+  'three-001': ['松本いちか', '深田えいみ', '天海こころ'],
   'four-001': ['松本いちか', '深田えいみ', 'MIRU', '楓カレン'],
   'unknown-001': ['未收录甲', '未收录乙', '未收录丙', '未收录丁'],
   'empty-001': null,
@@ -99,7 +99,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('https://missav.ai/cn/new');
     await waitSettled(page);
-    assert.equal(await visible(page, 'single-001'), true, 'five aliases are one person');
+    assert.equal(await visible(page, 'single-001'), true, 'one listed name is one person');
     assert.equal(await visible(page, 'three-001'), true, 'three is not greater than three');
     assert.equal(await visible(page, 'four-001'), false, 'four people exceed the default limit');
     assert.equal(await visible(page, 'unknown-001'), false, 'four names missing from the name list are still four people');

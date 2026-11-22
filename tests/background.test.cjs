@@ -191,7 +191,7 @@ test("合并查询失败后释放在途项，下一次请求可以恢复", async
   assert.equal(harness.metrics.fetches, 2);
 });
 
-test("旧缓存补齐女优数据后按人物去重，新缓存不重复请求", async () => {
+test("旧缓存补齐女优数据后按列出的名字计数，新缓存不重复请求", async () => {
   const old = { genres: ['sample'], tags: [], type: 'sample', duration: 15000 };
   const harness = createCacheHarness({ videoMetadataById: { 'sample-001': old } }, {
     actresses: ['楓カレン', '枫可怜', '枫花恋', '田中レモン', '田中柠檬']
@@ -199,11 +199,11 @@ test("旧缓存补齐女优数据后按人物去重，新缓存不重复请求",
   const first = await harness.query(['sample-001']);
   assert.equal(harness.metrics.fetches, 1, '旧记录缺少 actresses，必须实际补齐');
   assert.equal(first.items['sample-001'].actresses.length, 5);
-  assert.equal(first.items['sample-001'].cast.count, 1);
+  assert.equal(first.items['sample-001'].cast.count, 5);
   assert.equal(first.items['sample-001'].cast.names[0], '田中柠檬');
   assert.equal(harness.state['md:sample-001'].actresses.length, 5);
   const cached = await harness.query(['sample-001']);
-  assert.equal(cached.items['sample-001'].cast.count, 1);
+  assert.equal(cached.items['sample-001'].cast.count, 5);
   assert.equal(harness.metrics.fetches, 1);
 });
 

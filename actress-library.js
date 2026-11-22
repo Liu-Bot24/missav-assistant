@@ -46,20 +46,19 @@
       return keys.size === 1 ? keys.values().next().value : null;
     }
 
-    // Each entry in a video's cast list is one person, named in the library or not.
-    // Entries merge only when the library places them on the same person: a
-    // compilation may credit one actress under an earlier and a later name.
-    // Names the library does not place merge only when written the same way.
+    // Each entry in a video's cast list is one person; the same spelling listed
+    // twice is one entry. The library only supplies the name shown on covers.
     return (names) => {
-      const people = new Map();
+      const entries = new Set();
+      const shown = new Set();
       for (const name of Array.isArray(names) ? names : []) {
         if (typeof name !== "string" || !name.trim()) continue;
         const spelling = spellingOf(name);
-        const match = matchName(spelling);
-        const key = match ? `person:${match[0]}` : `name:${spelling}`;
-        if (!people.has(key)) people.set(key, match?.[1].name || name.trim());
+        if (entries.has(spelling)) continue;
+        entries.add(spelling);
+        shown.add(matchName(spelling)?.[1].name || name.trim());
       }
-      return { count: people.size, names: [...people.values()] };
+      return { count: entries.size, names: [...shown] };
     };
   }
 
