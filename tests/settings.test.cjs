@@ -255,3 +255,18 @@ test("从 1.2.0 以前的版本升级时，从未保存的查询类设置保持�
     assert.deepEqual([...values.categoryExcludeRules], [], JSON.stringify(details));
   }
 });
+
+test("升级当次迁移失败时，之后的读取补完旧默认，保存过的值不变", async () => {
+  const failures = { "sync.get": true };
+  const harness = createSettings({ local: {}, sync: { showActressNames: false }, failures });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.2" }, resolve));
+  let values = await load(harness);
+  assert.equal(values.actressLimitEnabled, true, "未完成时旧默认仍然生效");
+  delete failures["sync.get"];
+  values = await load(harness);
+  assert.equal(values.showActressNames, false, "同步区里保存的值迁移过来");
+  assert.equal(values.actressLimitEnabled, true);
+  assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+  assert.equal(harness.local.actressLimitEnabled, true, "旧默认已经写入");
+  assert.equal(Object.hasOwn(harness.local, "earlierDefaultsPending"), false);
+});

@@ -150,23 +150,37 @@
     return false;
   };
 
-  // Runs when the extension is installed or updated. After migration, an update
-  // from an earlier version writes the earlier defaults for preferences that
-  // were never stored; stored values, including false and empty lists, stay.
-  function handleInstalled(details, callback = () => {}) {
-    const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
+  // Set by an update from an earlier version until its defaults are written.
+  const EARLIER_DEFAULTS_PENDING = "earlierDefaultsPending";
+  const withEarlierDefaults = (value) => ({ ...EARLIER_DEFAULTS, ...value });
+
+  // Migrates, then writes the earlier defaults for preferences never stored,
+  // and only then clears the pending mark; stored values, including false and
+  // empty lists, stay. On any failure the mark stays and a later load retries.
+  function completeEarlierDefaults(callback = () => {}) {
     migrate((ok) => {
       const local = api()?.local;
-      if (!ok || !fromEarlier || !local) { callback(ok); return; }
-      local.get(Object.keys(EARLIER_DEFAULTS), (stored) => {
-        if (lastError()) { callback(false); return; }
+      if (!ok || !local) { callback(ok); return; }
+      local.get([...Object.keys(EARLIER_DEFAULTS), EARLIER_DEFAULTS_PENDING], (stored) => {
+        if (lastError()) { callback(true); return; }
+        if (!stored?.[EARLIER_DEFAULTS_PENDING]) { callback(true); return; }
         const missing = Object.fromEntries(Object.entries(EARLIER_DEFAULTS)
-          .filter(([key]) => !Object.hasOwn(stored ?? {}, key))
+          .filter(([key]) => !Object.hasOwn(stored, key))
           .map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
-        if (Object.keys(missing).length === 0) { callback(true); return; }
-        local.set(missing, () => callback(!lastError()));
+        local.set(missing, () => {
+          if (lastError()) { callback(true); return; }
+          local.remove(EARLIER_DEFAULTS_PENDING, () => callback(true));
+        });
       });
     });
+  }
+
+  // Runs when the extension is installed or updated.
+  function handleInstalled(details, callback = () => {}) {
+    const local = api()?.local;
+    const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
+    if (!fromEarlier || !local) { migrate(callback); return; }
+    local.set({ [EARLIER_DEFAULTS_PENDING]: true }, () => completeEarlierDefaults(callback));
   }
 
   function load(callback) {
@@ -179,13 +193,16 @@
       callback(sanitize(value), isMigrated);
     };
     if (!local) { done({}, false); return; }
-    local.get([...KEYS, VERSION_KEY], (stored) => {
+    local.get([...KEYS, VERSION_KEY, EARLIER_DEFAULTS_PENDING], (stored) => {
       if (lastError()) { done({}, false); return; }
-      if (stored?.[VERSION_KEY] === VERSION) { done(stored, true); return; }
-      migrate((ok) => local.get([...KEYS, ...LEGACY_KEYS], (current) => {
+      if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(stored, true); return; }
+      const prepare = stored?.[EARLIER_DEFAULTS_PENDING] ? completeEarlierDefaults : migrate;
+      prepare((ok) => local.get([...KEYS, ...LEGACY_KEYS, EARLIER_DEFAULTS_PENDING], (current) => {
         if (lastError()) { done({}, false); return; }
-        // Without a completed migration, earlier local values still count.
-        done(ok ? pickSettings(current) : upgradeValues({ ...pickLegacy(current), ...pickSettings(current) }), ok);
+        // Without a completed migration, earlier local values still count; while
+        // the update's defaults are not written yet, they stand in for missing ones.
+        const value = ok ? pickSettings(current) : upgradeValues({ ...pickLegacy(current), ...pickSettings(current) });
+        done(current?.[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(value) : value, ok);
       }));
     });
   }
