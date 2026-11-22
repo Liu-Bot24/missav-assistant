@@ -34,7 +34,7 @@ async function run(browser, count) {
         metrics.messages += 1;
         setTimeout(() => callback({ ok: true, items: Object.fromEntries(message.itemIds.map((id) => [id, {
           genres: ["中出し"], tags: [], type: "jav", duration: 7000, actresses: ["A", "B"],
-          cast: { names: ["A", "B"], confirmedCount: 2, people: [], unresolved: [], complete: true } }])) }), 40);
+          cast: { names: ["A", "B"], count: 2 } }])) }), 40);
       } },
       storage: { local: { get(_keys, callback) { callback({ settingsVersion: 2 }); } }, onChanged: { addListener() {} } }
     };

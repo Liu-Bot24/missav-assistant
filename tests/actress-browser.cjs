@@ -102,7 +102,7 @@ const waitSettled = page => page.waitForFunction(() => !document.querySelector('
     assert.equal(await visible(page, 'single-001'), true, 'five aliases are one person');
     assert.equal(await visible(page, 'three-001'), true, 'three is not greater than three');
     assert.equal(await visible(page, 'four-001'), false, 'four people exceed the default limit');
-    assert.equal(await visible(page, 'unknown-001'), true, 'unknown aliases cannot prove four people');
+    assert.equal(await visible(page, 'unknown-001'), false, 'four names missing from the name list are still four people');
     assert.equal(await visible(page, 'empty-001'), false, 'missing cast data cannot count as passing an enabled actress filter');
     assert.equal(await page.locator('[data-id="empty-001"]').evaluate(el => el.classList.contains('viewing-assistant-unverified')), true);
     assert.equal(await page.locator('[data-id="single-001"] .viewing-assistant-names').textContent(), '田中柠檬');

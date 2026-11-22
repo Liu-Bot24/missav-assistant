@@ -38,34 +38,19 @@
       return keys.size === 1 ? keys.values().next().value : null;
     }
 
+    // Each entry in a video's cast list is one person, named in the library or not.
+    // Entries merge only when the library places them on the same person: a
+    // compilation may credit one actress under an earlier and a later name.
     return (names) => {
       const people = new Map();
-      const unresolved = new Map();
-      const display = new Map();
       for (const name of Array.isArray(names) ? names : []) {
         if (typeof name !== "string" || !name.trim()) continue;
         const normalized = normalize(name);
         const match = matchName(normalized);
-        const person = match?.[1];
-        if (person?.id) {
-          if (!people.has(person.id)) people.set(person.id, { id: person.id, name: person.name });
-          if (!display.has(person.id)) display.set(person.id, person.name);
-        } else {
-          // Unmapped, shared and unverified names are not evidence of an extra person.
-          // Never use the API's name count or invent a person ID from a raw name.
-          if (!unresolved.has(normalized)) unresolved.set(normalized, name.trim());
-          const label = person?.name || name.trim();
-          const displayKey = match?.[0] ?? `unresolved:${normalized}`;
-          if (!display.has(displayKey)) display.set(displayKey, label);
-        }
+        const key = match ? `person:${match[0]}` : `name:${normalized}`;
+        if (!people.has(key)) people.set(key, match?.[1].name || name.trim());
       }
-      return {
-        people: [...people.values()],
-        confirmedCount: people.size,
-        names: [...display.values()],
-        unresolved: [...unresolved.values()],
-        complete: Array.isArray(names) && unresolved.size === 0
-      };
+      return { count: people.size, names: [...people.values()] };
     };
   }
 

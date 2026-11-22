@@ -517,8 +517,8 @@
     if (!metadata) return false;
 
     if (settings.actressLimitEnabled &&
-        Number.isSafeInteger(metadata.cast?.confirmedCount) &&
-        metadata.cast.confirmedCount > settings.maxActresses) return false;
+        Number.isSafeInteger(metadata.cast?.count) &&
+        metadata.cast.count > settings.maxActresses) return false;
 
     const values = metadataValues(metadata);
     const excluded = settings.categoryExcludeRules.some((rule) =>

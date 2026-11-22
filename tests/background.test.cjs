@@ -115,7 +115,7 @@ test("性能：多个页面同时查询重叠番号只发出一次在途查询",
 
 test("旧版整份缓存一次性迁移为逐片存储，之后每次只读取所查影片", async () => {
   const legacy = Object.fromEntries(Array.from({ length: 5000 }, (_, i) =>
-    [`sample-${i}`, { ...sampleRecord(recent(i)), cast: { confirmedCount: 1 } }]));
+    [`sample-${i}`, { ...sampleRecord(recent(i)), cast: { count: 1 } }]));
   const harness = createCacheHarness({ videoMetadataById: legacy });
   for (let i = 0; i < 12; i += 1) {
     assert.equal((await harness.query([`sample-${i}`])).items[`sample-${i}`].duration, 15000);
@@ -199,11 +199,11 @@ test("旧缓存补齐女优数据后按人物去重，新缓存不重复请求",
   const first = await harness.query(['sample-001']);
   assert.equal(harness.metrics.fetches, 1, '旧记录缺少 actresses，必须实际补齐');
   assert.equal(first.items['sample-001'].actresses.length, 5);
-  assert.equal(first.items['sample-001'].cast.confirmedCount, 1);
+  assert.equal(first.items['sample-001'].cast.count, 1);
   assert.equal(first.items['sample-001'].cast.names[0], '田中柠檬');
   assert.equal(harness.state['md:sample-001'].actresses.length, 5);
   const cached = await harness.query(['sample-001']);
-  assert.equal(cached.items['sample-001'].cast.confirmedCount, 1);
+  assert.equal(cached.items['sample-001'].cast.count, 1);
   assert.equal(harness.metrics.fetches, 1);
 });
 
@@ -304,9 +304,7 @@ test("后台用一个只读 Batch 查询多个 item，并只返回精确 ID", as
   assert.deepEqual(Object.keys(response.items).sort(), ["mida-737", "pets-071"]);
   assert.deepEqual(Array.from(response.items["pets-071"].genres), ["女装・男の娘"]);
   assert.equal(response.items["pets-071"].duration, 14438);
-  assert.equal(response.items["pets-071"].cast.confirmedCount, 0);
-  assert.equal(response.items["pets-071"].cast.complete, true);
-  assert.equal(response.items["mida-737"].cast.complete, false);
+  assert.equal(response.items["pets-071"].cast.count, 0);
   const body = JSON.parse(request.options.body);
   assert.equal(body.requests.length, 2);
   assert.equal(body.requests.every((item) => item.method === "POST"), true);
