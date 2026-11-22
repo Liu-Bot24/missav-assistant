@@ -224,3 +224,34 @@ test("默认只开不需要查询资料的功能；已打开的查询类设置�
   assert.equal(legacy.actressLimitEnabled, true);
   assert.deepEqual([...legacy.categoryExcludeRules], ["group:gender-diverse"]);
 });
+
+test("从 1.2.0 以前的版本升级时，从未保存的查询类设置保持原来的默认", async () => {
+  const installed = (local, details, sync = {}) => new Promise((resolve) => {
+    const harness = createSettings({ local, sync });
+    harness.settings.handleInstalled(details, () => resolve(harness));
+  });
+  const upgraded = await installed({ settingsVersion: 2, hideUntagged: true }, { reason: "update", previousVersion: "1.1.0" });
+  let values = await load(upgraded);
+  assert.equal(values.actressLimitEnabled, true);
+  assert.equal(values.showActressNames, true);
+  assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+  assert.equal(values.hideUntagged, true);
+
+  const explicit = await installed({ settingsVersion: 2, actressLimitEnabled: false, categoryExcludeRules: [] },
+    { reason: "update", previousVersion: "1.1.0" });
+  values = await load(explicit);
+  assert.equal(values.actressLimitEnabled, false, "保存过的 false 不改");
+  assert.deepEqual([...values.categoryExcludeRules], [], "保存过的空列表不改");
+  assert.equal(values.showActressNames, true);
+
+  const fromSync = await installed({}, { reason: "update", previousVersion: "1.0.2" }, { showActressNames: false });
+  values = await load(fromSync);
+  assert.equal(values.showActressNames, false, "同步区里的旧值先迁移，不被旧默认覆盖");
+  assert.equal(values.actressLimitEnabled, true);
+
+  for (const details of [{ reason: "install" }, { reason: "update", previousVersion: "1.2.0" }, { reason: "chrome_update" }]) {
+    values = await load(await installed({}, details));
+    assert.equal(values.actressLimitEnabled, false, JSON.stringify(details));
+    assert.deepEqual([...values.categoryExcludeRules], [], JSON.stringify(details));
+  }
+});

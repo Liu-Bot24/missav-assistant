@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "观看小助手",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "按标签、分类和女优人数隐藏视频列表中不想看的内容，并从后面的页面补齐。",
   "permissions": [
     "storage"

@@ -23,8 +23,8 @@ const LEGACY_CACHE_COUNT_KEY = "metadataCacheCount";
 const MAX_DISCOVERED_CATEGORIES = 5000;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
-chrome.runtime.onInstalled?.addListener(() => {
-  SettingsStore.migrate();
+chrome.runtime.onInstalled?.addListener((details) => {
+  SettingsStore.handleInstalled(details);
   void prepareMetadataCache().catch(() => {});
 });
 

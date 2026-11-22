@@ -17,6 +17,14 @@
     categoryExcludeRules: Object.freeze([])
   });
   const KEYS = Object.freeze(Object.keys(DEFAULTS));
+  // Before 1.2.0 these were on by default. An update keeps them for anyone who
+  // never set them, so filtering they relied on does not silently stop.
+  const EARLIER_DEFAULTS_UNTIL = "1.2.0";
+  const EARLIER_DEFAULTS = Object.freeze({
+    actressLimitEnabled: true,
+    showActressNames: true,
+    categoryExcludeRules: Object.freeze(["group:gender-diverse"])
+  });
   const VERSION_KEY = "settingsVersion";
   const VERSION = 2;
 
@@ -133,6 +141,34 @@
     });
   }
 
+  const isEarlierVersion = (version, than) => {
+    const parts = (value) => String(value ?? "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+    const [left, right] = [parts(version), parts(than)];
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      if ((left[index] ?? 0) !== (right[index] ?? 0)) return (left[index] ?? 0) < (right[index] ?? 0);
+    }
+    return false;
+  };
+
+  // Runs when the extension is installed or updated. After migration, an update
+  // from an earlier version writes the earlier defaults for preferences that
+  // were never stored; stored values, including false and empty lists, stay.
+  function handleInstalled(details, callback = () => {}) {
+    const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
+    migrate((ok) => {
+      const local = api()?.local;
+      if (!ok || !fromEarlier || !local) { callback(ok); return; }
+      local.get(Object.keys(EARLIER_DEFAULTS), (stored) => {
+        if (lastError()) { callback(false); return; }
+        const missing = Object.fromEntries(Object.entries(EARLIER_DEFAULTS)
+          .filter(([key]) => !Object.hasOwn(stored ?? {}, key))
+          .map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
+        if (Object.keys(missing).length === 0) { callback(true); return; }
+        local.set(missing, () => callback(!lastError()));
+      });
+    });
+  }
+
   function load(callback) {
     const local = api()?.local;
     const done = (value, isMigrated) => {
@@ -192,6 +228,6 @@
   }
 
   globalThis.SettingsStore = Object.freeze({
-    DEFAULTS, KEYS, sanitize, load, save, migrate, hasSyncCopy, removeSyncCopy, changedSettings
+    DEFAULTS, KEYS, sanitize, load, save, migrate, handleInstalled, hasSyncCopy, removeSyncCopy, changedSettings
   });
 })();
