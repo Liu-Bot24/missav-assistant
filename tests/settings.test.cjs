@@ -268,7 +268,7 @@ test("升级当次迁移失败时，之后的读取补完旧默认，保存过�
   const harness = createSettings({ local: {}, sync: { showActressNames: false }, failures });
   await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.2" }, resolve));
   let values = await load(harness);
-  assert.equal(values.actressLimitEnabled, true, "未完成时旧默认仍然生效");
+  assert.equal(values.actressLimitEnabled, false, "还没读到旧设置时不替用户打开查询");
   delete failures["sync.get"];
   values = await load(harness);
   assert.equal(values.showActressNames, false, "同步区里保存的值迁移过来");
@@ -314,7 +314,7 @@ test("从 1.0.0 升级不会打开它没有的女优功能，只保留它原有�
     const values = await load(harness);
     assert.equal(values.actressLimitEnabled, false);
     assert.equal(values.showActressNames, false);
-    assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+    assert.deepEqual([...values.categoryExcludeRules], failures["sync.get"] ? [] : ["group:gender-diverse"]);
   }
 });
 
@@ -347,7 +347,7 @@ test("首次迁移失败、旧缓存随后被清理，重试时仍沿用那一�
   await new Promise((resolve) => harness.settings.handleInstalled({ reason: "chrome_update" }, resolve));
   delete harness.local.videoMetadataById;
   delete harness.local.discoveredTypes;
-  assert.equal((await load(harness)).actressLimitEnabled, true, "迁移未完成时也生效");
+  assert.equal((await load(harness)).actressLimitEnabled, false, "还没读到旧设置时不替用户打开查询");
   delete failures["sync.get"];
   const values = await load(harness);
   assert.equal(values.actressLimitEnabled, true);
@@ -364,4 +364,47 @@ test("升级事件给出的版本优先于缓存里的痕迹", async () => {
   assert.equal(values.actressLimitEnabled, false);
   assert.equal(values.showActressNames, false);
   assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+});
+
+test("内容页先读到痕迹、升级事件随后给出版本时，以事件为准", async () => {
+  const hold = ["local.get"];
+  const harness = createSettings({ hold, local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } } });
+  const loaded = load(harness);
+  harness.release();
+  const installed = new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.0" }, resolve));
+  hold.length = 0;
+  harness.release();
+  harness.release();
+  await installed;
+  const values = await loaded;
+  assert.equal(values.actressLimitEnabled, false);
+  assert.equal(values.showActressNames, false);
+  assert.equal(harness.local.actressLimitEnabled, false);
+  assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+});
+
+test("记下旧版本失败一次时，本次仍按痕迹补写默认", async () => {
+  let sets = 0;
+  const harness = createSettings({ failures: { "local.set": () => ++sets === 1 },
+    local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } } });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "chrome_update" }, resolve));
+  assert.equal(harness.local.actressLimitEnabled, true);
+  delete harness.local.videoMetadataById;
+  assert.equal((await load(harness)).showActressNames, true);
+});
+
+test("旧设置暂时读不到时不打开用户关过的查询类功能", async () => {
+  const failures = { "sync.get": true };
+  const harness = createSettings({ failures,
+    local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } },
+    sync: { enabled: false, actressLimitEnabled: false, showActressNames: false, genreExcludeRules: [] } });
+  let values = await load(harness);
+  assert.equal(values.actressLimitEnabled, false);
+  assert.equal(values.showActressNames, false);
+  assert.deepEqual([...values.categoryExcludeRules], []);
+  delete failures["sync.get"];
+  values = await load(harness);
+  assert.equal(values.enabled, false);
+  assert.equal(values.actressLimitEnabled, false);
+  assert.deepEqual([...values.categoryExcludeRules], []);
 });
