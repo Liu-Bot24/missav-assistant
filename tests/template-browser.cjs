@@ -31,6 +31,7 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
       else if (url.hostname === 'partial.test') body = markup({ badge: false });
       else if (url.hostname === 'external-cards.test') body = markup({ host: 'https://elsewhere.test' });
       else if (url.hostname === 'delayed.test') body = '<!doctype html><div id="root"></div>';
+      else if (url.hostname === 'busy.test') body = '<!doctype html><div id="noise"></div><div id="root"></div><script>let n=0;(function tick(){const a=document.createElement("a");a.href="/p/"+n++;noise.append(a);noise.classList.toggle("on");if(noise.children.length>50)noise.firstChild.remove();requestAnimationFrame(tick);})();</script>';
       else if (url.hostname === 'late-links.test') body = markup().replace(/href="\/cn\/demo-\d+"/g, 'href="#"');
       else if (url.hostname === 'one-result.test') body = markup({ count: 1 });
       else if (url.pathname === '/cn') {
@@ -100,6 +101,20 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
     await delayed.locator('#grid').evaluate((grid, html) => grid.insertAdjacentHTML('beforeend', html), card(100));
     await delayed.waitForFunction(() => getComputedStyle(grid.lastElementChild).display === 'none');
     await delayed.close();
+    // The watcher pauses after a relevant change; a list finished during that
+    // pause, or long after many pauses on a constantly changing page, is still found.
+    const busy = await open('https://busy.test/cn/new');
+    await busy.waitForTimeout(600);
+    assert.equal(await busy.locator('[data-viewing-assistant]').count(), 0);
+    await busy.locator('#root').evaluate(async (root, html) => {
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      root.append(parsed.querySelector('nav'));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      root.append(parsed.querySelector('main'));
+    }, markup());
+    await busy.waitForSelector('[data-viewing-assistant]', { timeout: 3000 });
+    assert.equal(await visibleCount(busy), 6);
+    await busy.close();
     // Upgrade from a sync-storage version: preferences exist only in the account copy.
     await worker.evaluate(async () => {
       await chrome.storage.local.remove([...SettingsStore.KEYS, 'settingsVersion']);

@@ -93,9 +93,17 @@
     };
     check();
     if (!started) {
+      const options = { childList: true, subtree: true, attributes: true, attributeFilter: ["href", "class"] };
+      // Pause while a check is pending: it reads the whole page, so changes made
+      // in the meantime need no records. Busy pages then cost one check per pause.
       const schedule = () => {
         if (started || timer !== undefined) return;
-        timer = setTimeout(() => { timer = undefined; check(); }, 120);
+        observer.disconnect();
+        timer = setTimeout(() => {
+          timer = undefined;
+          check();
+          if (!started) observer.observe(root, options);
+        }, 120);
       };
       observer = new MutationObserver((mutations) => {
         const relevant = mutations.some((mutation) =>
@@ -111,7 +119,7 @@
         );
         if (relevant) schedule();
       });
-      observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["href", "class"] });
+      observer.observe(root, options);
       root.addEventListener("DOMContentLoaded", check, { once: true });
     }
     return { check };
