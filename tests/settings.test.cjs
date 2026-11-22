@@ -12,13 +12,18 @@ function createSettings({ local = {}, sync = {}, failures = {}, hold = [] } = {}
   const calls = [];
   const held = [];
   const area = (name, state) => {
-    const respond = (operation, callback, value) => {
+    // A failure is either always on or a function deciding each call.
+    const fails = (operation) => {
+      const failure = failures[`${name}.${operation}`];
+      return Boolean(typeof failure === "function" ? failure() : failure);
+    };
+    const respond = (operation, callback, value, failed = fails(operation)) => {
       if (hold.includes(`${name}.${operation}`)) {
         held.push(() => { callback?.(value); });
         return;
       }
       calls.push(`${name}.${operation}`);
-      runtime.lastError = failures[`${name}.${operation}`] ? { message: "fixture failure" } : null;
+      runtime.lastError = failed ? { message: "fixture failure" } : null;
       callback?.(runtime.lastError ? undefined : value);
       runtime.lastError = null;
     };
@@ -30,12 +35,14 @@ function createSettings({ local = {}, sync = {}, failures = {}, hold = [] } = {}
           .filter((key) => Object.hasOwn(state, key)).map((key) => [key, state[key]]))));
       },
       set(value, callback) {
-        if (!failures[`${name}.set`]) Object.assign(state, structuredClone(value));
-        respond("set", callback);
+        const failed = fails("set");
+        if (!failed) Object.assign(state, structuredClone(value));
+        respond("set", callback, undefined, failed);
       },
       remove(keys, callback) {
-        if (!failures[`${name}.remove`]) for (const key of [].concat(keys)) delete state[key];
-        respond("remove", callback);
+        const failed = fails("remove");
+        if (!failed) for (const key of [].concat(keys)) delete state[key];
+        respond("remove", callback, undefined, failed);
       }
     };
   };
@@ -269,4 +276,22 @@ test("升级当次迁移失败时，之后的读取补完旧默认，保存过�
   assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
   assert.equal(harness.local.actressLimitEnabled, true, "旧默认已经写入");
   assert.equal(Object.hasOwn(harness.local, "earlierDefaultsPending"), false);
+});
+
+test("写升级标记失败时，升级当次仍补写旧默认", async () => {
+  let sets = 0;
+  const harness = createSettings({ local: { settingsVersion: 2 }, failures: { "local.set": () => ++sets === 1 } });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.1.0" }, resolve));
+  assert.equal(harness.local.actressLimitEnabled, true);
+  assert.equal((await load(harness)).showActressNames, true);
+});
+
+test("补写旧默认后的回读失败时，沿用已经读到的设置", async () => {
+  let gets = 0;
+  const harness = createSettings({ local: { settingsVersion: 2, earlierDefaultsPending: true, enabled: false },
+    failures: { "local.get": () => ++gets === 4 } });
+  const values = await load(harness);
+  assert.equal(gets, 4, "第四次读取是回读");
+  assert.equal(values.enabled, false);
+  assert.equal(values.actressLimitEnabled, true);
 });

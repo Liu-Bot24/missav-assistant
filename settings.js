@@ -157,13 +157,14 @@
   // Migrates, then writes the earlier defaults for preferences never stored,
   // and only then clears the pending mark; stored values, including false and
   // empty lists, stay. On any failure the mark stays and a later load retries.
-  function completeEarlierDefaults(callback = () => {}) {
+  // `due` says the update itself is running, in case writing the mark failed.
+  function completeEarlierDefaults(callback = () => {}, due = false) {
     migrate((ok) => {
       const local = api()?.local;
       if (!ok || !local) { callback(ok); return; }
       local.get([...Object.keys(EARLIER_DEFAULTS), EARLIER_DEFAULTS_PENDING], (stored) => {
         if (lastError()) { callback(true); return; }
-        if (!stored?.[EARLIER_DEFAULTS_PENDING]) { callback(true); return; }
+        if (!due && !stored?.[EARLIER_DEFAULTS_PENDING]) { callback(true); return; }
         const missing = Object.fromEntries(Object.entries(EARLIER_DEFAULTS)
           .filter(([key]) => !Object.hasOwn(stored, key))
           .map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
@@ -180,7 +181,7 @@
     const local = api()?.local;
     const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
     if (!fromEarlier || !local) { migrate(callback); return; }
-    local.set({ [EARLIER_DEFAULTS_PENDING]: true }, () => completeEarlierDefaults(callback));
+    local.set({ [EARLIER_DEFAULTS_PENDING]: true }, () => completeEarlierDefaults(callback, true));
   }
 
   function load(callback) {
@@ -198,7 +199,12 @@
       if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(stored, true); return; }
       const prepare = stored?.[EARLIER_DEFAULTS_PENDING] ? completeEarlierDefaults : migrate;
       prepare((ok) => local.get([...KEYS, ...LEGACY_KEYS, EARLIER_DEFAULTS_PENDING], (current) => {
-        if (lastError()) { done({}, false); return; }
+        // If this read fails, the values already read still stand.
+        if (lastError()) {
+          const known = pickSettings(stored);
+          done(stored[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(known) : known, false);
+          return;
+        }
         // Without a completed migration, earlier local values still count; while
         // the update's defaults are not written yet, they stand in for missing ones.
         const value = ok ? pickSettings(current) : upgradeValues({ ...pickLegacy(current), ...pickSettings(current) });
