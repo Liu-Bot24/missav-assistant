@@ -53,4 +53,6 @@
 
 为了识别各网站的视频列表，扩展会在你打开的网页上运行，浏览器因此会提示它可以访问所有网站。你可以在扩展管理页把网站访问权限限制为自己使用的网站。
 
-女优艺名的对应关系来自随扩展附带的名录，来源和许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。随附的女优名录除外：`third-party/amane/mapping_actor.xml` 和由它生成的 `actress-data.js` 来自 [Amane](https://github.com/sqzw-x/amane)，按 [GPL-3.0](third-party/amane/LICENSE) 分发，再分发这两个文件时须遵守 GPL-3.0。来源和改动见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

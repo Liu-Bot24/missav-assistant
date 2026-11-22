@@ -35,7 +35,7 @@ function Invoke-Git {
 function Get-PackageFiles([string]$Commit) {
   @(Invoke-Git ls-tree -r --name-only $Commit | Where-Object {
       ($_ -notmatch '/' -and $_ -match '\.(js|css|html)$') -or
-      $_ -in @('manifest.json', 'README.md', 'THIRD_PARTY_NOTICES.md', 'scripts/build-actress-data.ps1') -or
+      $_ -in @('manifest.json', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'scripts/build-actress-data.ps1') -or
       $_ -like 'icons/*' -or $_ -like 'third-party/*'
     } | Sort-Object)
 }

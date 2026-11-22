@@ -39,6 +39,7 @@ test("Manifest 引用的本地资源全部存在", () => {
     "text.js",
     "actress-data.js",
     "actress-library.js",
+    "LICENSE",
     "third-party/amane/LICENSE",
     "third-party/amane/mapping_actor.xml",
     "THIRD_PARTY_NOTICES.md"
