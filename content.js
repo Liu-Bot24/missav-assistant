@@ -33,7 +33,7 @@
   const MAX_CACHED_PAGES = MAX_REFILL_PAGES * 2;
   const pageHtmlCache = new Map();
   const pageRequests = new Set();
-  const metadataClient = MetadataClient.create({ query: sendMetadataQuery });
+  const metadataClient = MetadataClient.create({ query: sendMetadataQuery, active: () => needsMetadata() });
   // Only cards whose data changed are re-checked; settings, page load and
   // navigation re-check the whole page.
   const changedMetadataIds = new Set();

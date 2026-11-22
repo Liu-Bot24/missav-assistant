@@ -5,10 +5,10 @@ const vm = require('node:vm');
 const test = require('node:test');
 const source = fs.readFileSync(path.join(__dirname, '..', 'metadata-client.js'), 'utf8');
 const tick = () => new Promise(setImmediate);
-function create(query, delay = async () => {}) {
+function create(query, delay = async () => {}, active) {
   const context = { queueMicrotask, setTimeout };
   vm.runInNewContext(source, context);
-  return context.MetadataClient.create({ query, delay });
+  return context.MetadataClient.create({ query, delay, ...(active ? { active } : {}) });
 }
 
 test('65 个未缓存影片合并为 30/30/5，慢批次不阻塞已返回批次', async () => {
@@ -70,4 +70,24 @@ test('请求失败最多三次，错误与不存在记录分开；恢复时不�
   client.invalidateUnresolved();
   await client.settled(['a']);
   assert.equal(calls, 4);
+});
+
+test('查询功能关闭后，排队中的重试不再发送影片编号，重新打开后重新查询', async () => {
+  const calls = [];
+  let on = true;
+  let releaseDelay;
+  const client = create(async ids => { calls.push([...ids]); return {}; },
+    () => new Promise(resolve => { releaseDelay = resolve; }), () => on);
+  client.request(['item-1']);
+  await tick();
+  assert.equal(calls.length, 1);
+  on = false;
+  releaseDelay();
+  await tick();
+  assert.equal(calls.length, 1, '关闭后不再重发');
+  assert.equal(client.get('item-1').status, 'idle');
+  on = true;
+  client.request(['item-1']);
+  await tick();
+  assert.equal(calls.length, 2, '重新打开后照常查询');
 });

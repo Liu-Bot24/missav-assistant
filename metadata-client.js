@@ -2,7 +2,9 @@
   "use strict";
 
   // Owns lookup state only. Consumers decide how records affect filters or UI.
-  function create({ query, batchSize = 30, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
+  // A retry is sent only while `active()` holds, so turning lookups off stops
+  // video IDs from being sent again; dropped records are looked up afresh later.
+  function create({ query, batchSize = 30, active = () => true, delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
     const records = new Map();
     const queued = new Set();
     const listeners = new Set();
@@ -22,7 +24,16 @@
     async function fetchBatch(batch) {
       let remaining = batch;
       for (let attempt = 0; attempt < 3 && remaining.length > 0; attempt += 1) {
-        if (attempt > 0) await delay(attempt * 1000);
+        if (attempt > 0) {
+          await delay(attempt * 1000);
+          if (!active()) {
+            for (const record of remaining) {
+              records.delete(record.id);
+              finish(record, "error");
+            }
+            return;
+          }
+        }
         let items;
         try { items = await query(remaining.map((record) => record.id)); }
         catch { items = {}; }
