@@ -31,7 +31,7 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
       else if (url.hostname === 'partial.test') body = markup({ badge: false });
       else if (url.hostname === 'external-cards.test') body = markup({ host: 'https://elsewhere.test' });
       else if (url.hostname === 'delayed.test') body = '<!doctype html><div id="root"></div>';
-      else if (url.hostname === 'late-more.test') body = markup({ badge: false }).replace(/<\/a>/g, '</a><span x-show="item.dvd_id && item.has_chinese_subtitle">中文字幕</span>');
+      else if (url.hostname === 'late-more.test' || url.hostname === 'late-more-link.test') body = markup({ badge: false }).replace(/<\/a>/g, '</a><span x-show="item.dvd_id && item.has_chinese_subtitle">中文字幕</span>');
       else if (url.hostname === 'busy.test') body = '<!doctype html><div id="noise"></div><div id="root"></div><script>let n=0;(function tick(){const a=document.createElement("a");a.href="/p/"+n++;noise.append(a);noise.classList.toggle("on");if(noise.children.length>50)noise.firstChild.remove();requestAnimationFrame(tick);})();</script>';
       else if (url.hostname === 'late-links.test') body = markup().replace(/href="\/cn\/demo-\d+"/g, 'href="#"');
       else if (url.hostname === 'one-result.test') body = markup({ count: 1 });
@@ -116,13 +116,16 @@ const visibleCount = page => page.locator('.card').evaluateAll(cards => cards.fi
     await busy.waitForSelector('[data-viewing-assistant]', { timeout: 3000 });
     assert.equal(await visibleCount(busy), 6);
     await busy.close();
-    // A template recognized by its load-more button is found when the button comes last.
-    const lateMore = await open('https://late-more.test/cn/new');
-    await lateMore.waitForTimeout(400);
-    assert.equal(await lateMore.locator('[data-viewing-assistant]').count(), 0);
-    await lateMore.locator('main').evaluate(main => main.insertAdjacentHTML('beforeend', '<button @click.prevent="loadMore(0)">Load more</button>'));
-    await lateMore.waitForSelector('[data-viewing-assistant]', { timeout: 3000 });
-    await lateMore.close();
+    // A template recognized by its load-more control is found when the control comes last.
+    for (const [host, control] of [['late-more.test', '<button @click.prevent="loadMore(0)">Load more</button>'],
+      ['late-more-link.test', '<a @click.prevent="loadMore(0)">Load more</a>']]) {
+      const lateMore = await open(`https://${host}/cn/new`);
+      await lateMore.waitForTimeout(400);
+      assert.equal(await lateMore.locator('[data-viewing-assistant]').count(), 0, host);
+      await lateMore.locator('main').evaluate((main, html) => main.insertAdjacentHTML('beforeend', html), control);
+      await lateMore.waitForSelector('[data-viewing-assistant]', { timeout: 3000 });
+      await lateMore.close();
+    }
     // Upgrade from a sync-storage version: preferences exist only in the account copy.
     await worker.evaluate(async () => {
       await chrome.storage.local.remove([...SettingsStore.KEYS, 'settingsVersion']);
