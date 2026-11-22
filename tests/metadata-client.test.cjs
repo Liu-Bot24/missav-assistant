@@ -91,3 +91,14 @@ test('查询功能关闭后，排队中的重试不再发送影片编号，重�
   await tick();
   assert.equal(calls.length, 2, '重新打开后照常查询');
 });
+
+test('不需要资料时，新批次和点击重试都不发送影片编号', async () => {
+  const calls = [];
+  const client = create(async ids => { calls.push([...ids]); return {}; }, async () => {}, () => false);
+  client.request(['item-1']);
+  await tick();
+  client.retry(['item-1']);
+  await tick();
+  assert.equal(calls.length, 0);
+  assert.equal(client.get('item-1').status, 'idle');
+});

@@ -33,7 +33,7 @@
   const MAX_CACHED_PAGES = MAX_REFILL_PAGES * 2;
   const pageHtmlCache = new Map();
   const pageRequests = new Set();
-  const metadataClient = MetadataClient.create({ query: sendMetadataQuery, active: () => needsMetadata() });
+  const metadataClient = MetadataClient.create({ query: sendMetadataQuery, active: () => isFilteringActive() && needsMetadata() });
   // Only cards whose data changed are re-checked; settings, page load and
   // navigation re-check the whole page.
   const changedMetadataIds = new Set();
@@ -610,7 +610,7 @@
           const id = getCardItemId(card, location.href);
           const record = metadataClient.get(id);
           if (metadataDecision(id) === "unverified" ||
-              (!metadataFilteringEnabled() && (record.status === "error" ||
+              (!metadataFilteringEnabled() && needsMetadata() && (record.status === "error" ||
                 (record.status === "ready" && !Array.isArray(record.data.actresses))))) unresolved.add(id);
         }
         if (grid === paginatedGrid) {
