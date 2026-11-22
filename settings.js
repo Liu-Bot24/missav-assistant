@@ -17,14 +17,30 @@
     categoryExcludeRules: Object.freeze([])
   });
   const KEYS = Object.freeze(Object.keys(DEFAULTS));
-  // Before 1.2.0 these were on by default. An update keeps them for anyone who
-  // never set them, so filtering they relied on does not silently stop.
+  // Until 1.2.0 some lookup features were on by default. An update keeps the
+  // defaults of the version it replaces for preferences never set, so filtering
+  // the user relied on does not stop and features they never had stay off.
   const EARLIER_DEFAULTS_UNTIL = "1.2.0";
-  const EARLIER_DEFAULTS = Object.freeze({
-    actressLimitEnabled: true,
-    showActressNames: true,
-    categoryExcludeRules: Object.freeze(["group:gender-diverse"])
-  });
+  const PERFORMER_FEATURES_SINCE = "1.0.1";
+  const EARLIER_DEFAULT_KEYS = Object.freeze(["actressLimitEnabled", "showActressNames", "categoryExcludeRules"]);
+  function earlierDefaults(version) {
+    return {
+      categoryExcludeRules: ["group:gender-diverse"],
+      ...(isEarlierVersion(version, PERFORMER_FEATURES_SINCE) ? {} : { actressLimitEnabled: true, showActressNames: true })
+    };
+  }
+  // What 1.0.x left in local storage once it had looked videos up.
+  const EARLIER_CACHE = "videoMetadataById";
+  const EARLIER_CATEGORIES = "discoveredTypes";
+  // Replacing the files and restarting the browser sends no update event, so
+  // migration recognizes the earlier version by those traces: 1.0.1 cached
+  // performers with each video, 1.0.0 did not.
+  function defaultsFromTraces(local) {
+    const cache = local?.[EARLIER_CACHE];
+    if (!cache && !local?.[EARLIER_CATEGORIES]) return {};
+    const hadPerformers = Object.values(cache ?? {}).some((record) => record && Object.hasOwn(record, "actresses"));
+    return earlierDefaults(hadPerformers ? PERFORMER_FEATURES_SINCE : "1.0.0");
+  }
   const VERSION_KEY = "settingsVersion";
   const VERSION = 2;
 
@@ -108,11 +124,11 @@
   function migrate(callback = () => {}) {
     const storage = api();
     if (!storage?.local) { callback(false); return; }
-    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY])], (local) => {
+    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY, EARLIER_CACHE, EARLIER_CATEGORIES])], (local) => {
       if (lastError()) { callback(false); return; }
       if (local?.[VERSION_KEY] === VERSION) { callback(true); return; }
       const finish = (synced) => {
-        const merged = upgradeValues({ ...synced, ...pickLegacy(local), ...pickSettings(local) });
+        const merged = upgradeValues({ ...defaultsFromTraces(local), ...synced, ...pickLegacy(local), ...pickSettings(local) });
         const obsolete = [...Object.values(LEGACY_NAMES), LEGACY_LOCAL_MARKER]
           .filter((key) => Object.hasOwn(local ?? {}, key));
         // Another page or the background may have finished first; its result,
@@ -150,24 +166,24 @@
     return false;
   };
 
-  // Set by an update from an earlier version until its defaults are written.
+  // Holds the version an update replaced until its defaults are written.
   const EARLIER_DEFAULTS_PENDING = "earlierDefaultsPending";
-  const withEarlierDefaults = (value) => ({ ...EARLIER_DEFAULTS, ...value });
+  const withEarlierDefaults = (version, value) => ({ ...earlierDefaults(version), ...value });
 
   // Migrates, then writes the earlier defaults for preferences never stored,
   // and only then clears the pending mark; stored values, including false and
   // empty lists, stay. On any failure the mark stays and a later load retries.
-  // `due` says the update itself is running, in case writing the mark failed.
-  function completeEarlierDefaults(callback = () => {}, due = false) {
+  // `updatedFrom` is given while the update itself runs, in case writing the mark failed.
+  function completeEarlierDefaults(callback = () => {}, updatedFrom = null) {
     migrate((ok) => {
       const local = api()?.local;
       if (!ok || !local) { callback(ok); return; }
-      local.get([...Object.keys(EARLIER_DEFAULTS), EARLIER_DEFAULTS_PENDING], (stored) => {
+      local.get([...EARLIER_DEFAULT_KEYS, EARLIER_DEFAULTS_PENDING], (stored) => {
         if (lastError()) { callback(true); return; }
-        if (!due && !stored?.[EARLIER_DEFAULTS_PENDING]) { callback(true); return; }
-        const missing = Object.fromEntries(Object.entries(EARLIER_DEFAULTS)
-          .filter(([key]) => !Object.hasOwn(stored, key))
-          .map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
+        const version = updatedFrom ?? stored?.[EARLIER_DEFAULTS_PENDING];
+        if (!version) { callback(true); return; }
+        const missing = Object.fromEntries(Object.entries(earlierDefaults(version))
+          .filter(([key]) => !Object.hasOwn(stored, key)));
         local.set(missing, () => {
           if (lastError()) { callback(true); return; }
           local.remove(EARLIER_DEFAULTS_PENDING, () => callback(true));
@@ -181,7 +197,8 @@
     const local = api()?.local;
     const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
     if (!fromEarlier || !local) { migrate(callback); return; }
-    local.set({ [EARLIER_DEFAULTS_PENDING]: true }, () => completeEarlierDefaults(callback, true));
+    const version = details.previousVersion;
+    local.set({ [EARLIER_DEFAULTS_PENDING]: version }, () => completeEarlierDefaults(callback, version));
   }
 
   function load(callback) {
@@ -198,7 +215,8 @@
     // update's defaults are not written yet, they stand in for missing ones.
     const merge = (values, isMigrated) => {
       const value = isMigrated ? pickSettings(values) : upgradeValues({ ...pickLegacy(values), ...pickSettings(values) });
-      return values?.[EARLIER_DEFAULTS_PENDING] ? withEarlierDefaults(value) : value;
+      const version = values?.[EARLIER_DEFAULTS_PENDING];
+      return version ? withEarlierDefaults(version, value) : value;
     };
     const keys = [...KEYS, ...LEGACY_KEYS, VERSION_KEY, EARLIER_DEFAULTS_PENDING];
     local.get(keys, (stored) => {

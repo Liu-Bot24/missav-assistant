@@ -288,7 +288,7 @@ test("写升级标记失败时，升级当次仍补写旧默认", async () => {
 
 test("补写旧默认后的回读两次都失败时，沿用已经读到的设置", async () => {
   let gets = 0;
-  const harness = createSettings({ local: { settingsVersion: 2, earlierDefaultsPending: true, enabled: false },
+  const harness = createSettings({ local: { settingsVersion: 2, earlierDefaultsPending: "1.1.0", enabled: false },
     failures: { "local.get": () => [4, 5].includes(++gets) } });
   const values = await load(harness);
   assert.equal(gets, 5, "第四、五次读取是回读");
@@ -304,5 +304,35 @@ test("迁移后的回读失败时重读；两次都失败也不丢已迁入的�
     const values = await load(harness);
     assert.deepEqual([...values.categoryIncludeRules], ["value:sample-rule"], JSON.stringify(failing));
     assert.equal(gets, 5, JSON.stringify(failing));
+  }
+});
+
+test("从 1.0.0 升级不会打开它没有的女优功能，只保留它原有的默认隐藏分类", async () => {
+  for (const failures of [{}, { "sync.get": true }]) {
+    const harness = createSettings({ local: {}, sync: {}, failures });
+    await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.0" }, resolve));
+    const values = await load(harness);
+    assert.equal(values.actressLimitEnabled, false);
+    assert.equal(values.showActressNames, false);
+    assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+  }
+});
+
+test("覆盖文件后重启没有升级事件时，按旧版缓存格式沿用该版本的默认", async () => {
+  const record = { genres: ["sample"], tags: [], type: "jav", duration: 7200, cachedAt: 1 };
+  const cases = [
+    [{ videoMetadataById: { "abc-001": { ...record, actresses: [] } } }, {}, true, ["group:gender-diverse"]],
+    [{ videoMetadataById: { "abc-001": record } }, {}, false, ["group:gender-diverse"]],
+    [{ discoveredTypes: ["sample"] }, {}, false, ["group:gender-diverse"]],
+    [{ videoMetadataById: { "abc-001": { ...record, actresses: [] } } },
+      { actressLimitEnabled: false, showActressNames: false, genreExcludeRules: [] }, false, []],
+    [{}, {}, false, []]
+  ];
+  for (const [local, sync, performers, excluded] of cases) {
+    const values = await load(createSettings({ local, sync }));
+    const label = JSON.stringify([local, sync]);
+    assert.equal(values.actressLimitEnabled, performers, label);
+    assert.equal(values.showActressNames, performers, label);
+    assert.deepEqual([...values.categoryExcludeRules], excluded, label);
   }
 });
