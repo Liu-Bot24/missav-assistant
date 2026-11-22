@@ -79,6 +79,7 @@ test('名录里没有的名字只在写法相同时合并，不忽略大小写�
   assert.equal(library.resolve(['Lina', 'Li Na', '松本いちか', '深田えいみ']).count, 4);
   assert.equal(library.resolve(['Lina', 'lina']).count, 2);
   assert.equal(library.resolve(['Ｌｉｎａ', 'Lina']).count, 1, '只有全角半角之差的是同一写法');
+  assert.deepEqual([...library.resolve(['Ｌｉｎａ', 'Lina']).names], ['Ｌｉｎａ'], '显示第一次出现的原写法');
 });
 
 test('来源标为易误认或同名异人的写法不认作任何人', () => {
@@ -92,4 +93,17 @@ test('来源标为易误认或同名异人的写法不认作任何人', () => {
   assert.equal(resolve(['abc', '演员甲']).count, 1);
   assert.equal(resolve(['未知（ABC）', '演员甲']).count, 2);
   assert.equal(resolve(['未知（ABC、演员甲）', '演员甲']).count, 1);
+});
+
+test('单独一项的警告标记作用于该记录自己的名字；警告写法不能成为认人的依据', () => {
+  const caution = context.ActressData.cautionAliases;
+  assert.ok(caution.includes('平原みなみ') && caution.includes('あいか') && caution.includes('CHIYU'));
+  assert.equal(caution.includes('尾上涼子'), false);
+  assert.equal(library.resolve(['尾上涼子', '平原みなみ']).count, 2);
+  assert.equal(library.resolve(['CHIYU', 'Chiyu', 'chiyu']).count, 3);
+  assert.deepEqual([...library.resolve(['Chiyu']).names], ['Chiyu']);
+  const resolve = library.createResolver({ cautionAliases: ['ABC'], records: [
+    { id: 'person-a', name: '甲', aliases: ['演员甲', 'ABC'] }
+  ] });
+  assert.equal(resolve(['abc', '演员甲']).count, 2, '只靠警告写法的宽松匹配不认人');
 });

@@ -20,7 +20,11 @@ $ignoredAliases = [System.Collections.Generic.List[string]]::new()
 $cautionAliases = [System.Collections.Generic.List[string]]::new()
 foreach ($row in $document.actor.a) {
   foreach ($marked in ([string]$row.keyword).Split(',')) {
-    if ($marked -match '^(.*?)【(?:誤認注意|同名異人)】') { $spelling = $Matches[1].Trim(); if ($spelling) { $cautionAliases.Add($spelling) } }
+    if ($marked -notmatch '^(.*?)【(?:誤認注意|同名異人)】') { continue }
+    $spelling = $Matches[1].Trim()
+    # A marker standing alone applies to the record's own names.
+    $spellings = if ($spelling) { @($spelling) } else { @([string]$row.jp, [string]$row.zh_cn, [string]$row.zh_tw) }
+    foreach ($value in $spellings) { if ($value.Trim()) { $cautionAliases.Add($value.Trim()) } }
   }
   $aliases = @(@([string]$row.jp, [string]$row.zh_cn, [string]$row.zh_tw) +
     ([string]$row.keyword).Split(',') | ForEach-Object { $_.Trim() } |

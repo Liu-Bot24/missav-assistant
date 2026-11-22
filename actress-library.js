@@ -15,6 +15,7 @@
       const key = record.id || `unverified:${index}`;
       if (!identities.has(key)) identities.set(key, record);
       for (const alias of record.aliases) {
+        if (caution.has(spellingOf(alias))) continue;
         const normalized = normalize(alias);
         if (!normalized || ignored.has(normalized)) continue;
         if (!byAlias.has(normalized)) byAlias.set(normalized, new Map());
@@ -56,7 +57,7 @@
         const spelling = spellingOf(name);
         const match = matchName(spelling);
         const key = match ? `person:${match[0]}` : `name:${spelling}`;
-        if (!people.has(key)) people.set(key, match?.[1].name || spelling);
+        if (!people.has(key)) people.set(key, match?.[1].name || name.trim());
       }
       return { count: people.size, names: [...people.values()] };
     };
