@@ -176,25 +176,37 @@
     return false;
   };
 
-  // Hold the replaced version until its defaults are written. The update event
-  // and the traces have a key each, so a guess never replaces the known version.
+  // The replaced version: from the update event until its defaults are written,
+  // or as guessed from the traces. A guess only stands in for missing values and
+  // is never stored as preferences, since a page can load before the event comes.
   const EARLIER_DEFAULTS_PENDING = "earlierDefaultsPending";
   const EARLIER_VERSION_TRACED = "earlierVersionTraced";
   const EARLIER_VERSION_MARKS = Object.freeze([EARLIER_DEFAULTS_PENDING, EARLIER_VERSION_TRACED]);
   const markedVersion = (values) => values?.[EARLIER_DEFAULTS_PENDING] ?? values?.[EARLIER_VERSION_TRACED];
   const withEarlierDefaults = (version, value) => ({ ...earlierDefaults(version), ...value });
 
-  // Migrates, then writes the earlier defaults for preferences never stored,
-  // and only then clears the pending mark; stored values, including false and
-  // empty lists, stay. On any failure the mark stays and a later load retries.
+  // One failed call must not leave rules unread: the popup would show empty
+  // lists, and adding to one would replace the rules not yet copied.
+  function migrateWithRetry(callback) {
+    migrate((ok, traced) => {
+      if (ok) { callback(ok, traced); return; }
+      migrate((retried, tracedAgain) => callback(retried, tracedAgain ?? traced));
+    });
+  }
+
+  // Migrates, then writes the earlier defaults of a version an event gave (or
+  // of a guess that could not be marked) for preferences never stored, and only
+  // then clears the marks; stored values, including false and empty lists, stay.
+  // On any failure the mark stays and a later load retries.
   // `updatedFrom` is given while the update itself runs, in case writing the mark failed.
   function completeEarlierDefaults(callback = () => {}, updatedFrom = null) {
-    migrate((ok, traced) => {
+    migrateWithRetry((ok, traced) => {
       const local = api()?.local;
       if (!ok || !local) { callback(ok); return; }
       local.get([...EARLIER_DEFAULT_KEYS, ...EARLIER_VERSION_MARKS], (stored) => {
         if (lastError()) { callback(true); return; }
-        const version = updatedFrom ?? markedVersion(stored) ?? traced;
+        const version = updatedFrom ?? stored?.[EARLIER_DEFAULTS_PENDING] ??
+          (stored?.[EARLIER_VERSION_TRACED] ? null : traced);
         if (!version) { callback(true); return; }
         const missing = Object.fromEntries(Object.entries(earlierDefaults(version))
           .filter(([key]) => !Object.hasOwn(stored, key)));
@@ -236,7 +248,7 @@
     const keys = [...KEYS, ...LEGACY_KEYS, VERSION_KEY, ...EARLIER_VERSION_MARKS];
     local.get(keys, (stored) => {
       if (lastError()) { done({}, false); return; }
-      if (stored?.[VERSION_KEY] === VERSION && !markedVersion(stored)) { done(stored, true); return; }
+      if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(merge(stored, true), true); return; }
       completeEarlierDefaults((ok) => {
         // The read after migration is tried twice; if both fail, the values read
         // before it stand, reported as not migrated.

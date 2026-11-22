@@ -24,8 +24,10 @@ const MAX_DISCOVERED_CATEGORIES = 5000;
 const ITEM_ID_PATTERN = /^[a-zA-Z0-9_:@.-]+$/;
 
 chrome.runtime.onInstalled?.addListener((details) => {
-  SettingsStore.handleInstalled(details);
-  void prepareMetadataCache().catch(() => {});
+  // The old cache tells migration which version left it, so it is converted afterwards.
+  SettingsStore.handleInstalled(details, (migrated) => {
+    if (migrated) void prepareMetadataCache().catch(() => {});
+  });
 });
 
 async function signPath(path) {

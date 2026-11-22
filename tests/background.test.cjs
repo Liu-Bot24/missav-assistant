@@ -51,6 +51,7 @@ const metadataWrites = (metrics) => metrics.writes.filter((keys) => keys.some((k
 function createCacheHarness(initialState = {}, options = {}) {
   const failures = options.fetchFailures ?? 0;
   let listener;
+  let installed;
   const local = createLocalArea(initialState);
   const metrics = { fetches: 0 };
   const context = vm.createContext({
@@ -71,7 +72,10 @@ function createCacheHarness(initialState = {}, options = {}) {
       }) };
     },
     chrome: {
-      runtime: { onMessage: { addListener(fn) { listener = fn; } } },
+      runtime: {
+        onMessage: { addListener(fn) { listener = fn; } },
+        onInstalled: { addListener(fn) { installed = fn; } }
+      },
       storage: { local: local.api }
     }
   });
@@ -79,6 +83,10 @@ function createCacheHarness(initialState = {}, options = {}) {
   vm.runInContext(backgroundSource, context);
   return {
     metrics, local, state: local.state,
+    install(settingsMigrated) {
+      context.SettingsStore = { handleInstalled: (_details, done) => done?.(settingsMigrated) };
+      installed({ reason: "chrome_update" });
+    },
     message(value, sender, respond) { return listener(value, sender, respond); },
     query(ids) { return new Promise((resolve) => listener(
       { type: "viewing-assistant-query-metadata", itemIds: ids },
@@ -425,4 +433,14 @@ test("未适配域名不能调用原站分类库，包括名称相似的域名",
     assert.equal(accepted, false, url);
   }
   assert.equal(harness.metrics.fetches, 0);
+});
+
+test("设置迁移没成功时，安装事件不清理旧缓存里的版本痕迹", async () => {
+  for (const migrated of [false, true]) {
+    const record = { genres: [], tags: [], type: "sample", duration: 60, actresses: [], cachedAt: 1 };
+    const harness = createCacheHarness({ videoMetadataById: { "abc-001": record } });
+    harness.install(migrated);
+    for (let i = 0; i < 10; i += 1) await new Promise(setImmediate);
+    assert.equal(Object.hasOwn(harness.state, "videoMetadataById"), !migrated, String(migrated));
+  }
 });

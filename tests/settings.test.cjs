@@ -353,8 +353,7 @@ test("首次迁移失败、旧缓存随后被清理，重试时仍沿用那一�
   assert.equal(values.actressLimitEnabled, true);
   assert.equal(values.showActressNames, true);
   assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
-  assert.equal(harness.local.actressLimitEnabled, true);
-  assert.equal(Object.hasOwn(harness.local, "earlierDefaultsPending"), false);
+  assert.equal(Object.hasOwn(harness.local, "actressLimitEnabled"), false, "推断只代替缺失值，不存成用户的设置");
 });
 
 test("升级事件给出的版本优先于缓存里的痕迹", async () => {
@@ -407,4 +406,45 @@ test("旧设置暂时读不到时不打开用户关过的查询类功能", async
   assert.equal(values.enabled, false);
   assert.equal(values.actressLimitEnabled, false);
   assert.deepEqual([...values.categoryExcludeRules], []);
+});
+
+test("同步区读失败一次时当场重试，旧规则读到后才交给弹窗编辑", async () => {
+  let gets = 0;
+  const harness = createSettings({ sync: { genreIncludeRules: ["value:sample-rule"] },
+    failures: { "sync.get": () => ++gets === 1 } });
+  const [values, isMigrated] = await new Promise((resolve) => harness.settings.load((...result) => resolve(result)));
+  assert.equal(isMigrated, true);
+  assert.deepEqual([...values.categoryIncludeRules], ["value:sample-rule"]);
+});
+
+test("旧版痕迹读失败一次时当场重读", async () => {
+  let gets = 0;
+  const harness = createSettings({ failures: { "local.get": () => ++gets === 1 },
+    local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } } });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "chrome_update" }, resolve));
+  delete harness.local.videoMetadataById;
+  assert.equal((await load(harness)).actressLimitEnabled, true);
+});
+
+test("页面在升级事件之前已经读完设置时，事件给出的版本仍然生效，用户存过的值不变", async () => {
+  const record = { genres: [], tags: [], type: "jav", duration: 60, cachedAt: 1 };
+  for (const changed of [false, true]) {
+    const harness = createSettings({ local: { videoMetadataById: { "abc-001": record } } });
+    let values = await load(harness);
+    assert.equal(values.actressLimitEnabled, false, "没有事件时按痕迹");
+    if (changed) await new Promise((resolve) => harness.settings.save({ ...values, hideUntagged: true }, resolve));
+    await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.1" }, resolve));
+    values = await load(harness);
+    assert.equal(values.actressLimitEnabled, !changed, String(changed));
+    assert.equal(values.showActressNames, !changed, String(changed));
+    assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+  }
+});
+
+test("只有推断标记时直接用本机设置，不再读取旧缓存和同步区", async () => {
+  const harness = createSettings({ local: { settingsVersion: 2, earlierVersionTraced: "1.0.1", showActressNames: false } });
+  const values = await load(harness);
+  assert.equal(values.actressLimitEnabled, true);
+  assert.equal(values.showActressNames, false);
+  assert.deepEqual(harness.calls, ["local.get"]);
 });
