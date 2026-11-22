@@ -33,13 +33,14 @@
   const EARLIER_CACHE = "videoMetadataById";
   const EARLIER_CATEGORIES = "discoveredTypes";
   // Replacing the files and restarting the browser sends no update event, so
-  // migration recognizes the earlier version by those traces: 1.0.1 cached
-  // performers with each video, 1.0.0 did not.
-  function defaultsFromTraces(local) {
+  // migration recognizes the earlier version by those traces. 1.0.0 cached every
+  // video it took categories from, without performers. 1.0.1 drops such records
+  // whenever it writes the cache, and may note categories without caching.
+  function versionFromTraces(local) {
     const cache = local?.[EARLIER_CACHE];
-    if (!cache && !local?.[EARLIER_CATEGORIES]) return {};
-    const hadPerformers = Object.values(cache ?? {}).some((record) => record && Object.hasOwn(record, "actresses"));
-    return earlierDefaults(hadPerformers ? PERFORMER_FEATURES_SINCE : "1.0.0");
+    if (!cache && !local?.[EARLIER_CATEGORIES]) return null;
+    const withoutPerformers = Object.values(cache ?? {}).some((record) => record && !Object.hasOwn(record, "actresses"));
+    return withoutPerformers ? "1.0.0" : PERFORMER_FEATURES_SINCE;
   }
   const VERSION_KEY = "settingsVersion";
   const VERSION = 2;
@@ -121,14 +122,16 @@
   // sync copy. The sync copy is left in place: removing it would also reset
   // other devices, so that is the user's decision. The callback receives
   // whether the preferences are now under the current version.
+  // The version seen in the traces is marked first: the background clears them,
+  // and migration may have to be retried after that.
   function migrate(callback = () => {}) {
     const storage = api();
     if (!storage?.local) { callback(false); return; }
-    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY, EARLIER_CACHE, EARLIER_CATEGORIES])], (local) => {
+    storage.local.get([...new Set([...KEYS, ...LEGACY_KEYS, LEGACY_LOCAL_MARKER, VERSION_KEY, EARLIER_DEFAULTS_PENDING, EARLIER_CACHE, EARLIER_CATEGORIES])], (local) => {
       if (lastError()) { callback(false); return; }
       if (local?.[VERSION_KEY] === VERSION) { callback(true); return; }
       const finish = (synced) => {
-        const merged = upgradeValues({ ...defaultsFromTraces(local), ...synced, ...pickLegacy(local), ...pickSettings(local) });
+        const merged = upgradeValues({ ...synced, ...pickLegacy(local), ...pickSettings(local) });
         const obsolete = [...Object.values(LEGACY_NAMES), LEGACY_LOCAL_MARKER]
           .filter((key) => Object.hasOwn(local ?? {}, key));
         // Another page or the background may have finished first; its result,
@@ -143,16 +146,25 @@
           });
         });
       };
-      if (!storage.sync) { finish({}); return; }
-      storage.sync.get(LEGACY_KEYS, (synced) => {
-        if (lastError()) {
-          // A build that kept preferences locally had already copied the sync
-          // area; otherwise leave it unmigrated so a later start can copy it.
-          if (Object.hasOwn(local ?? {}, LEGACY_LOCAL_MARKER)) finish({});
-          else callback(false);
-          return;
-        }
-        finish(pickLegacy(synced));
+      const copy = () => {
+        if (!storage.sync) { finish({}); return; }
+        storage.sync.get(LEGACY_KEYS, (synced) => {
+          if (lastError()) {
+            // A build that kept preferences locally had already copied the sync
+            // area; otherwise leave it unmigrated so a later start can copy it.
+            if (Object.hasOwn(local ?? {}, LEGACY_LOCAL_MARKER)) finish({});
+            else callback(false);
+            return;
+          }
+          finish(pickLegacy(synced));
+        });
+      };
+      // A version given by an update event takes precedence over the traces.
+      const traced = local?.[EARLIER_DEFAULTS_PENDING] ? null : versionFromTraces(local);
+      if (!traced) { copy(); return; }
+      storage.local.set({ [EARLIER_DEFAULTS_PENDING]: traced }, () => {
+        if (lastError()) { callback(false); return; }
+        copy();
       });
     });
   }
@@ -166,7 +178,8 @@
     return false;
   };
 
-  // Holds the version an update replaced until its defaults are written.
+  // Holds the replaced version, from the update event or the traces, until its
+  // defaults are written.
   const EARLIER_DEFAULTS_PENDING = "earlierDefaultsPending";
   const withEarlierDefaults = (version, value) => ({ ...earlierDefaults(version), ...value });
 
@@ -196,7 +209,7 @@
   function handleInstalled(details, callback = () => {}) {
     const local = api()?.local;
     const fromEarlier = details?.reason === "update" && isEarlierVersion(details.previousVersion, EARLIER_DEFAULTS_UNTIL);
-    if (!fromEarlier || !local) { migrate(callback); return; }
+    if (!fromEarlier || !local) { completeEarlierDefaults(callback); return; }
     const version = details.previousVersion;
     local.set({ [EARLIER_DEFAULTS_PENDING]: version }, () => completeEarlierDefaults(callback, version));
   }
@@ -222,8 +235,7 @@
     local.get(keys, (stored) => {
       if (lastError()) { done({}, false); return; }
       if (stored?.[VERSION_KEY] === VERSION && !stored[EARLIER_DEFAULTS_PENDING]) { done(stored, true); return; }
-      const prepare = stored?.[EARLIER_DEFAULTS_PENDING] ? completeEarlierDefaults : migrate;
-      prepare((ok) => {
+      completeEarlierDefaults((ok) => {
         // The read after migration is tried twice; if both fail, the values read
         // before it stand, reported as not migrated.
         const reread = (attemptsLeft) => local.get(keys, (current) => {

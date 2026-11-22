@@ -297,13 +297,13 @@ test("补写旧默认后的回读两次都失败时，沿用已经读到的设�
 });
 
 test("迁移后的回读失败时重读；两次都失败也不丢已迁入的规则", async () => {
-  for (const failing of [[4], [4, 5]]) {
+  for (const failing of [[5], [5, 6]]) {
     let gets = 0;
     const harness = createSettings({ local: { genreIncludeRules: ["value:sample-rule"] },
       failures: { "local.get": () => failing.includes(++gets) } });
     const values = await load(harness);
     assert.deepEqual([...values.categoryIncludeRules], ["value:sample-rule"], JSON.stringify(failing));
-    assert.equal(gets, 5, JSON.stringify(failing));
+    assert.equal(gets, 6, JSON.stringify(failing));
   }
 });
 
@@ -323,7 +323,10 @@ test("覆盖文件后重启没有升级事件时，按旧版缓存格式沿用�
   const cases = [
     [{ videoMetadataById: { "abc-001": { ...record, actresses: [] } } }, {}, true, ["group:gender-diverse"]],
     [{ videoMetadataById: { "abc-001": record } }, {}, false, ["group:gender-diverse"]],
-    [{ discoveredTypes: ["sample"] }, {}, false, ["group:gender-diverse"]],
+    // 1.0.0 记下分类时必定同时缓存了资料；1.0.1 对不完整的资料只记分类。
+    [{ discoveredTypes: ["sample"] }, {}, true, ["group:gender-diverse"]],
+    // 1.0.1 写缓存时会丢掉 1.0.0 的记录，两种并存说明最后用的是 1.0.0。
+    [{ videoMetadataById: { "abc-001": { ...record, actresses: [] }, "abc-002": record } }, {}, false, ["group:gender-diverse"]],
     [{ videoMetadataById: { "abc-001": { ...record, actresses: [] } } },
       { actressLimitEnabled: false, showActressNames: false, genreExcludeRules: [] }, false, []],
     [{}, {}, false, []]
@@ -335,4 +338,30 @@ test("覆盖文件后重启没有升级事件时，按旧版缓存格式沿用�
     assert.equal(values.showActressNames, performers, label);
     assert.deepEqual([...values.categoryExcludeRules], excluded, label);
   }
+});
+
+test("首次迁移失败、旧缓存随后被清理，重试时仍沿用那一版的默认", async () => {
+  const failures = { "sync.get": true };
+  const harness = createSettings({ failures, local: {
+    videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } }, discoveredTypes: ["sample"] } });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "chrome_update" }, resolve));
+  delete harness.local.videoMetadataById;
+  delete harness.local.discoveredTypes;
+  assert.equal((await load(harness)).actressLimitEnabled, true, "迁移未完成时也生效");
+  delete failures["sync.get"];
+  const values = await load(harness);
+  assert.equal(values.actressLimitEnabled, true);
+  assert.equal(values.showActressNames, true);
+  assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
+  assert.equal(harness.local.actressLimitEnabled, true);
+  assert.equal(Object.hasOwn(harness.local, "earlierDefaultsPending"), false);
+});
+
+test("升级事件给出的版本优先于缓存里的痕迹", async () => {
+  const harness = createSettings({ local: { videoMetadataById: { "abc-001": { actresses: [], cachedAt: 1 } } } });
+  await new Promise((resolve) => harness.settings.handleInstalled({ reason: "update", previousVersion: "1.0.0" }, resolve));
+  const values = await load(harness);
+  assert.equal(values.actressLimitEnabled, false);
+  assert.equal(values.showActressNames, false);
+  assert.deepEqual([...values.categoryExcludeRules], ["group:gender-diverse"]);
 });
