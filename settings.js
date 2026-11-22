@@ -2,18 +2,19 @@
   "use strict";
 
   // One definition of the user's preferences for the popup, pages and background.
-  // Preferences live in this browser only.
+  // Preferences live in this browser only. By default nothing needs the category
+  // service: features that look videos up are turned on by the user.
   const DEFAULTS = Object.freeze({
     enabled: true,
     homepageEnabled: true,
     hideUntagged: false,
     infiniteScroll: false,
-    actressLimitEnabled: true,
+    actressLimitEnabled: false,
     maxActresses: 3,
-    showActressNames: true,
+    showActressNames: false,
     hiddenLabels: Object.freeze(["uncensored"]),
     categoryIncludeRules: Object.freeze([]),
-    categoryExcludeRules: Object.freeze(["group:gender-diverse"])
+    categoryExcludeRules: Object.freeze([])
   });
   const KEYS = Object.freeze(Object.keys(DEFAULTS));
   const VERSION_KEY = "settingsVersion";
@@ -43,11 +44,11 @@
       homepageEnabled: value?.homepageEnabled !== false,
       hideUntagged: value?.hideUntagged === true,
       infiniteScroll: value?.infiniteScroll === true,
-      actressLimitEnabled: value?.actressLimitEnabled !== false,
+      actressLimitEnabled: value?.actressLimitEnabled === true,
       maxActresses: Number.isSafeInteger(Number(value?.maxActresses)) && Number(value.maxActresses) >= 0 &&
         value.maxActresses !== null && value.maxActresses !== ""
         ? Number(value.maxActresses) : DEFAULTS.maxActresses,
-      showActressNames: value?.showActressNames !== false,
+      showActressNames: value?.showActressNames === true,
       hiddenLabels: LabelLibrary.sanitizeLabelKinds(value?.hiddenLabels),
       categoryIncludeRules: sanitizeCategoryRules(value?.categoryIncludeRules, DEFAULTS.categoryIncludeRules),
       categoryExcludeRules: sanitizeCategoryRules(value?.categoryExcludeRules, DEFAULTS.categoryExcludeRules)

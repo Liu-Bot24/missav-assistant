@@ -1,5 +1,5 @@
-// Cost of one card change on long lists under the shipped default settings
-// (performer limit, names on covers, default hidden category).
+// Cost of one card change on long lists with every feature that looks videos up
+// turned on (performer limit, names on covers, a hidden category).
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -36,7 +36,8 @@ async function run(browser, count) {
           genres: ["中出し"], tags: [], type: "jav", duration: 7000, actresses: ["A", "B"],
           cast: { names: ["A", "B"], count: 2 } }])) }), 40);
       } },
-      storage: { local: { get(_keys, callback) { callback({ settingsVersion: 2 }); } }, onChanged: { addListener() {} } }
+      storage: { local: { get(_keys, callback) { callback({ settingsVersion: 2, actressLimitEnabled: true, showActressNames: true,
+        categoryExcludeRules: ["group:gender-diverse"] }); } }, onChanged: { addListener() {} } }
     };
   }, count);
   for (const file of ["text.js", "site-library.js", "label-library.js", "category-library.js", "settings.js", "metadata-client.js"]) {

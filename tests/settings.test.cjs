@@ -205,3 +205,22 @@ test("存储变化中只挑出设置项", () => {
   const { settings } = createSettings();
   assert.deepEqual(Array.from(settings.changedSettings({ "md:abc-001": {}, metadataCacheCount: {}, enabled: {} })), ["enabled"]);
 });
+
+test("默认只开不需要查询资料的功能；已打开的查询类设置保持打开", async () => {
+  const fresh = await load(createSettings({ local: { settingsVersion: 2 } }));
+  assert.equal(fresh.actressLimitEnabled, false);
+  assert.equal(fresh.showActressNames, false);
+  assert.deepEqual([...fresh.categoryIncludeRules], []);
+  assert.deepEqual([...fresh.categoryExcludeRules], []);
+  assert.deepEqual([...fresh.hiddenLabels], ["uncensored"]);
+  assert.equal(fresh.enabled, true);
+  const kept = await load(createSettings({ local: { settingsVersion: 2, actressLimitEnabled: true,
+    showActressNames: true, categoryExcludeRules: ["group:gender-diverse"] } }));
+  assert.equal(kept.actressLimitEnabled, true);
+  assert.equal(kept.showActressNames, true);
+  assert.deepEqual([...kept.categoryExcludeRules], ["group:gender-diverse"]);
+  const legacy = await load(createSettings({ sync: { actressLimitEnabled: true, showActressNames: true,
+    genreExcludeRules: ["group:gender-diverse"] } }));
+  assert.equal(legacy.actressLimitEnabled, true);
+  assert.deepEqual([...legacy.categoryExcludeRules], ["group:gender-diverse"]);
+});
